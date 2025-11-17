@@ -10,6 +10,7 @@ const sampleData = {
       stock_actual: 24,
       precio_unitario: 1.20,
       categoria: "Lácteos",
+      caducidad: "2025-12-01",
       ubicacion: "A-01",
       stockMin: 10,
       stockMax: 50
@@ -21,6 +22,7 @@ const sampleData = {
       stock_actual: 5,
       precio_unitario: 2.50,
       categoria: "Panadería",
+      caducidad: "2025-12-01",
       ubicacion: "A-02",
       stockMin: 15,
       stockMax: 40
@@ -32,6 +34,7 @@ const sampleData = {
       stock_actual: 65,
       precio_unitario: 8.90,
       categoria: "Aceites",
+      caducidad: "2025-12-01",
       ubicacion: "B-01",
       stockMin: 20,
       stockMax: 60
@@ -43,6 +46,7 @@ const sampleData = {
       stock_actual: 35,
       precio_unitario: 1.80,
       categoria: "Cereales",
+      caducidad: "2025-12-01",
       ubicacion: "B-02",
       stockMin: 25,
       stockMax: 80
@@ -54,6 +58,7 @@ const sampleData = {
       stock_actual: 2,
       precio_unitario: 1.50,
       categoria: "Conservas",
+      caducidad: "2025-12-01",
       ubicacion: "C-01",
       stockMin: 10,
       stockMax: 50
@@ -166,6 +171,7 @@ function generateAlerts() {
       appState.alerts.push({
         type: 'critical',
         title: `Stock crítico: ${product.nombre}`,
+        caducidad: `Caducidad:${product.caducidad}`,
         description: `Solo quedan ${product.stock_actual} unidades. Ubicación: ${product.ubicacion}`,
         priority: 'critical'
       });
@@ -173,6 +179,7 @@ function generateAlerts() {
       appState.alerts.push({
         type: 'warning',
         title: `Stock bajo: ${product.nombre}`,
+        caducidad: `Caducidad:${product.caducidad}`,
         description: `${product.stock_actual} unidades disponibles. Ubicación: ${product.ubicacion}`,
         priority: 'warning'
       });
@@ -180,6 +187,7 @@ function generateAlerts() {
       appState.alerts.push({
         type: 'info',
         title: `Exceso de stock: ${product.nombre}`,
+        caducidad: `Caducidad:${product.caducidad}`,
         description: `${product.stock_actual} unidades (máx: ${product.stockMax}). Ubicación: ${product.ubicacion}`,
         priority: 'info'
       });
@@ -281,6 +289,7 @@ function renderProductsTable() {
         <td>${product.nombre}</td>
         <td><strong>${product.stock_actual}</strong> uds</td>
         <td>${product.ubicacion}</td>
+        <td>${product.caducidad}</td>
         <td>€${product.precio_unitario.toFixed(2)}</td>
         <td><span class="status-badge ${statusClass}">${statusText}</span></td>
       </tr>

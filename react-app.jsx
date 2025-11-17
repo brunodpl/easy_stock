@@ -119,15 +119,15 @@ function Dashboard() {
     };
 
     const getStatusColor = (score) => {
-        if (score <= 33) return '#ef4444';
-        if (score <= 66) return '#f59e0b';
-        return '#10b981';
+        if (score < 50) return '#ef4444';  // Rojo: 0-50%
+        if (score < 80) return '#f59e0b';  // Amarillo: 50-80%
+        return '#22c55e';                  // Verde: 80-100%
     };
 
     const getStatusLabel = (score) => {
-        if (score <= 33) return 'Crítico';
-        if (score <= 66) return 'Atención';
-        return 'Óptimo';
+        if (score < 50) return 'Crítico';
+        if (score < 80) return 'Atención';
+        return 'Saludable';
     };
 
     const getSpaceColor = (percentage) => {

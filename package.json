@@ -1,0 +1,16 @@
+{
+  "name": "easy_stock",
+  "version": "1.0.0",
+  "description": "Sistema de Gestión de Almacén",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["warehouse", "stock", "inventory"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

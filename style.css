@@ -1158,27 +1158,38 @@ tbody tr:hover {
 }
 
 /* Warehouse Status Gauge */
+.warehouse-status {
+  transition: background 0.6s ease, border-color 0.6s ease, box-shadow 0.6s ease !important;
+}
+
 .gauge-container {
   display: flex;
   justify-content: center;
-  padding: var(--space-20) 0;
+  align-items: center;
+  padding: var(--space-24) 0;
 }
 
 .gauge {
   width: 100%;
-  max-width: 300px;
+  max-width: 280px;
   height: auto;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.12));
+}
+
+.gauge-background {
+  transition: stroke 0.3s ease;
+}
+
+.gauge-fill {
+  transition: stroke 0.6s ease, stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .gauge-value {
-  font-size: 28px;
-  font-weight: var(--font-weight-bold);
-  fill: var(--color-text);
-}
-
-.gauge-label {
-  font-size: 14px;
-  fill: var(--color-text-secondary);
+  font-size: 42px;
+  font-weight: 800;
+  fill: #22c55e;
+  transition: fill 0.6s ease;
+  letter-spacing: -0.02em;
 }
 
 /* Space Occupancy */

@@ -10,8 +10,20 @@ const sampleData = {
       stock_actual: 24,
       precio_unitario: 1.20,
       categoria: "Lácteos",
-      caducidad: "2025-12-01",
+      caducidad: "2025-11-18",
       ubicacion: "A-01",
+      stockMin: 10,
+      stockMax: 50
+    },
+    {
+      id: 6,
+      nombre: "Leche Entera 1L",
+      sku: "LAC-LEC-001",
+      stock_actual: 24,
+      precio_unitario: 1.20,
+      categoria: "Lácteos",
+      caducidad: "2025-11-25",
+      ubicacion: "A-03",
       stockMin: 10,
       stockMax: 50
     },
@@ -22,7 +34,7 @@ const sampleData = {
       stock_actual: 5,
       precio_unitario: 2.50,
       categoria: "Panadería",
-      caducidad: "2025-12-01",
+      caducidad: "2025-11-20",
       ubicacion: "A-02",
       stockMin: 15,
       stockMax: 40
@@ -162,16 +174,46 @@ function loadData() {
   generateAlerts();
 }
 
+// Helper function to calculate days until expiration
+function getDaysUntilExpiration(expirationDate) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const expDate = new Date(expirationDate);
+  expDate.setHours(0, 0, 0, 0);
+  const diffTime = expDate - today;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays;
+}
+
 // Generate Alerts
 function generateAlerts() {
   appState.alerts = [];
   
   appState.products.forEach(product => {
+    // Check expiration alerts
+    const daysUntilExpiration = getDaysUntilExpiration(product.caducidad);
+    
+    if (daysUntilExpiration < 2) {
+      appState.alerts.push({
+        type: 'critical',
+        title: `⚠️ Caducidad crítica: ${product.nombre}`,
+        description: `Caduca en ${daysUntilExpiration} día(s) - ${product.caducidad}. Ubicación: ${product.ubicacion}`,
+        priority: 'critical'
+      });
+    } else if (daysUntilExpiration >= 2 && daysUntilExpiration <= 7) {
+      appState.alerts.push({
+        type: 'warning',
+        title: `⏰ Próximo a caducar: ${product.nombre}`,
+        description: `Caduca en ${daysUntilExpiration} días - ${product.caducidad}. Ubicación: ${product.ubicacion}`,
+        priority: 'warning'
+      });
+    }
+    
+    // Check stock alerts
     if (product.stock_actual <= product.stockMin * 0.5) {
       appState.alerts.push({
         type: 'critical',
         title: `Stock crítico: ${product.nombre}`,
-        caducidad: `Caducidad:${product.caducidad}`,
         description: `Solo quedan ${product.stock_actual} unidades. Ubicación: ${product.ubicacion}`,
         priority: 'critical'
       });
@@ -179,7 +221,6 @@ function generateAlerts() {
       appState.alerts.push({
         type: 'warning',
         title: `Stock bajo: ${product.nombre}`,
-        caducidad: `Caducidad:${product.caducidad}`,
         description: `${product.stock_actual} unidades disponibles. Ubicación: ${product.ubicacion}`,
         priority: 'warning'
       });
@@ -187,7 +228,6 @@ function generateAlerts() {
       appState.alerts.push({
         type: 'info',
         title: `Exceso de stock: ${product.nombre}`,
-        caducidad: `Caducidad:${product.caducidad}`,
         description: `${product.stock_actual} unidades (máx: ${product.stockMax}). Ubicación: ${product.ubicacion}`,
         priority: 'info'
       });
@@ -269,57 +309,134 @@ function renderProductsTable() {
   if (!tbody) return;
   
   tbody.innerHTML = appState.products.map(product => {
-    let statusClass = 'ok';
-    let statusText = 'OK';
+    // Check stock status
+    let stockClass = '';
+    let stockStyle = '';
     
     if (product.stock_actual <= product.stockMin * 0.5) {
-      statusClass = 'critical';
-      statusText = 'CRÍTICO';
+      stockClass = 'stock-critical';
+      stockStyle = 'background-color: #fee; color: #c00; font-weight: bold; padding: 4px 8px; border-radius: 4px;';
     } else if (product.stock_actual <= product.stockMin) {
-      statusClass = 'low';
-      statusText = 'BAJO';
-    } else if (product.stock_actual >= product.stockMax) {
-      statusClass = 'excess';
-      statusText = 'EXCESO';
+      stockClass = 'stock-warning';
+      stockStyle = 'background-color: #ffc; color: #880; font-weight: bold; padding: 4px 8px; border-radius: 4px;';
+    }
+    
+    // Check expiration status
+    const daysUntilExpiration = getDaysUntilExpiration(product.caducidad);
+    let expirationClass = '';
+    let expirationStyle = '';
+    
+    if (daysUntilExpiration < 2) {
+      expirationClass = 'expiration-critical';
+      expirationStyle = 'background-color: #fee; color: #c00; font-weight: bold; padding: 2px 6px; border-radius: 4px;';
+    } else if (daysUntilExpiration >= 2 && daysUntilExpiration <= 7) {
+      expirationClass = 'expiration-warning';
+      expirationStyle = 'background-color: #ffc; color: #880; font-weight: bold; padding: 2px 6px; border-radius: 4px;';
     }
     
     return `
       <tr>
         <td><strong>${product.sku}</strong></td>
         <td>${product.nombre}</td>
-        <td><strong>${product.stock_actual}</strong> uds</td>
+        <td><span class="${stockClass}" style="${stockStyle}"><strong>${product.stock_actual}</strong> uds</span></td>
         <td>${product.ubicacion}</td>
-        <td>${product.caducidad}</td>
+        <td><span class="${expirationClass}" style="${expirationStyle}">${product.caducidad}${daysUntilExpiration < 8 ? ` (${daysUntilExpiration}d)` : ''}</span></td>
         <td>€${product.precio_unitario.toFixed(2)}</td>
-        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
       </tr>
     `;
   }).join('');
 }
 
+// Calculate Warehouse Health Score
+function calculateWarehouseHealth() {
+  let healthScore = 100;
+  
+  // Factor 1: Alertas críticas y de advertencia (peso: 50%)
+  const criticalAlerts = appState.alerts.filter(a => a.priority === 'critical').length;
+  const warningAlerts = appState.alerts.filter(a => a.priority === 'warning').length;
+  const totalProducts = appState.products.length;
+  
+  if (totalProducts > 0) {
+    // Penalización por alertas críticas (hasta -30 puntos)
+    const criticalPenalty = Math.min((criticalAlerts / totalProducts) * 100, 30);
+    // Penalización por alertas de advertencia (hasta -20 puntos)
+    const warningPenalty = Math.min((warningAlerts / totalProducts) * 50, 20);
+    healthScore -= (criticalPenalty + warningPenalty);
+  }
+  
+  // Factor 2: Eficiencia de ocupación (peso: 30%)
+  const totalStock = appState.products.reduce((sum, p) => sum + p.stock_actual, 0);
+  const capacity = appState.warehouseConfig.capacity || 1000;
+  const occupancyRate = (totalStock / capacity) * 100;
+  
+  // Ocupación óptima entre 60-85%
+  if (occupancyRate < 40) {
+    healthScore -= 15; // Subutilización
+  } else if (occupancyRate > 90) {
+    healthScore -= 20; // Sobreocupación
+  } else if (occupancyRate >= 60 && occupancyRate <= 85) {
+    healthScore += 5; // Bonus por ocupación óptima
+  }
+  
+  // Factor 3: Excesos de stock (peso: 20%)
+  const excessProducts = appState.products.filter(p => p.stock_actual >= p.stockMax).length;
+  if (totalProducts > 0) {
+    const excessPenalty = Math.min((excessProducts / totalProducts) * 30, 15);
+    healthScore -= excessPenalty;
+  }
+  
+  // Asegurar que el score esté entre 0-100
+  return Math.max(0, Math.min(100, Math.round(healthScore)));
+}
+
 // Update Warehouse Gauge
 function updateWarehouseGauge() {
-  const percentage = appState.warehouseConfig.occupied_percentage || 0;
+  const healthScore = calculateWarehouseHealth();
   const gaugePercentageElement = document.getElementById('gauge-percentage');
   const gaugeFill = document.getElementById('gauge-fill');
+  const warehouseCard = document.getElementById('warehouse-status-card');
   
   if (gaugePercentageElement) {
-    gaugePercentageElement.textContent = `${percentage}%`;
+    gaugePercentageElement.textContent = `${healthScore}%`;
   }
   
   if (gaugeFill) {
     // Calculate stroke-dashoffset for semi-circle (251.2 is circumference of half circle)
     const circumference = 251.2;
-    const offset = circumference - (circumference * percentage / 100);
+    const offset = circumference - (circumference * healthScore / 100);
     gaugeFill.style.strokeDashoffset = offset;
     
-    // Change color based on percentage
-    if (percentage >= 90) {
-      gaugeFill.style.stroke = 'var(--color-error)';
-    } else if (percentage >= 75) {
-      gaugeFill.style.stroke = 'var(--color-warning)';
+    // Determine color based on health score
+    // 0-50%: Rojo (crítico)
+    // 50-80%: Amarillo (advertencia)
+    // 80-100%: Verde (saludable)
+    let color, bgColor, shadowColor;
+    
+    if (healthScore < 50) {
+      color = '#ef4444'; // Rojo
+      bgColor = 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(239, 68, 68, 0.08) 100%)';
+      shadowColor = 'rgba(239, 68, 68, 0.25)';
+    } else if (healthScore < 80) {
+      color = '#f59e0b'; // Amarillo
+      bgColor = 'linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(245, 158, 11, 0.08) 100%)';
+      shadowColor = 'rgba(245, 158, 11, 0.25)';
     } else {
-      gaugeFill.style.stroke = 'var(--color-primary)';
+      color = '#22c55e'; // Verde
+      bgColor = 'linear-gradient(135deg, rgba(34, 197, 94, 0.15) 0%, rgba(34, 197, 94, 0.08) 100%)';
+      shadowColor = 'rgba(34, 197, 94, 0.25)';
+    }
+    
+    // Aplicar colores al gauge y al texto
+    gaugeFill.style.stroke = color;
+    gaugePercentageElement.style.fill = color; // Texto del mismo color que la barra
+    
+    // Cambiar color de fondo de la card completa para resaltar
+    if (warehouseCard) {
+      warehouseCard.style.background = bgColor;
+      warehouseCard.style.borderColor = color;
+      warehouseCard.style.borderWidth = '2px';
+      warehouseCard.style.borderStyle = 'solid';
+      warehouseCard.style.boxShadow = `0 4px 16px ${shadowColor}, 0 0 0 1px ${color}33`;
     }
   }
 }

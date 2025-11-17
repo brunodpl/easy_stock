@@ -1,0 +1,21 @@
+{
+  "name": "Easy Stock - Gestión de Almacén",
+  "short_name": "Easy Stock",
+  "description": "Sistema inteligente de gestión de inventario con control por voz",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fcfcf9",
+  "theme_color": "#21808d",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "lang": "es",
+  "dir": "ltr"
+}

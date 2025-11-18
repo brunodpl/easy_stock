@@ -180,19 +180,19 @@ function Dashboard() {
                 <div className="kpi-grid">
                     <div className="kpi-card">
                         <div className="kpi-label">Total de Productos</div>
-                        <div className="kpi-value">{kpis.totalProducts}</div>
+                        <div className="kpi-value" color="black">{kpis.totalProducts}</div>
                     </div>
                     <div className="kpi-card">
                         <div className="kpi-label">Valor Total del Inventario</div>
-                        <div className="kpi-value">€{kpis.totalValue.toLocaleString('es-ES', { maximumFractionDigits: 0 })}</div>
+                        <div className="kpi-value" color="black">€{kpis.totalValue.toLocaleString('es-ES', { maximumFractionDigits: 0 })}</div>
                     </div>
                     <div className="kpi-card">
                         <div className="kpi-label">Productos en Alerta</div>
-                        <div className="kpi-value" style={{color: 'var(--alert)'}}>{kpis.alerts}</div>
+                        <div className="kpi-value" color="black">{kpis.alerts}</div>
                     </div>
                     <div className="kpi-card">
                         <div className="kpi-label">Productos con Exceso</div>
-                        <div className="kpi-value" style={{color: 'var(--primary)'}}>{kpis.excess}</div>
+                        <div className="kpi-value" color="black">{kpis.excess}</div>
                     </div>
                 </div>
 

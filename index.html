@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <meta name="description" content="Sistema de Gestión de Almacén - Control de inventario inteligente con alertas automáticas y control por voz">
     <meta name="keywords" content="gestión almacén, inventario, stock, control voz, alertas">
-    <meta name="author" content="Bruno Del Pino López">
+    <meta name="author" content="Bruno Del Palacio Rodríguez">
     <meta name="theme-color" content="#21808d">
     
     <!-- Favicon -->
@@ -151,9 +151,105 @@
                 <line x1="8" y1="23" x2="16" y2="23"></line>
             </svg>
         </button>
+
+        <!-- Theme Toggle Button -->
+        <button id="theme-toggle" class="theme-toggle" aria-label="Cambiar tema" title="Cambiar entre modo claro y oscuro">
+            <svg class="theme-icon theme-icon-light" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg class="theme-icon theme-icon-dark" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+        </button>
     </div>
 
     <!-- Scripts - defer for better performance -->
+    <script>
+        // Theme Toggle Script - Enhanced Version with Light Theme as Default
+        (function() {
+            const themeToggle = document.getElementById('theme-toggle');
+            const html = document.documentElement;
+            
+            // Get saved theme or default to LIGHT (not system preference)
+            const savedTheme = localStorage.getItem('theme');
+            const initialTheme = savedTheme || 'light'; // Always default to light theme
+            
+            // Apply initial theme immediately to prevent flash
+            html.setAttribute('data-color-scheme', initialTheme);
+            
+            // Add smooth transition class for theme changes
+            function addTransition() {
+                html.style.transition = 'background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1), color 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+                
+                // Apply transition to all major elements
+                const elements = document.querySelectorAll('.card, .kpi-card, .header, .btn, .alert-item, .invoice-item, .task-item');
+                elements.forEach(el => {
+                    el.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+                });
+            }
+            
+            function removeTransition() {
+                setTimeout(() => {
+                    html.style.transition = '';
+                    const elements = document.querySelectorAll('.card, .kpi-card, .header, .btn, .alert-item, .invoice-item, .task-item');
+                    elements.forEach(el => {
+                        el.style.transition = '';
+                    });
+                }, 400);
+            }
+            
+            // Toggle theme function with enhanced animations
+            function toggleTheme() {
+                const currentTheme = html.getAttribute('data-color-scheme');
+                const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+                
+                // Add transition
+                addTransition();
+                
+                // Change theme
+                html.setAttribute('data-color-scheme', newTheme);
+                localStorage.setItem('theme', newTheme);
+                
+                // Add subtle scale animation to button
+                if (themeToggle) {
+                    themeToggle.style.transform = 'scale(0.9)';
+                    setTimeout(() => {
+                        themeToggle.style.transform = '';
+                    }, 200);
+                }
+                
+                // Remove transition after animation
+                removeTransition();
+                
+                // Optional: Dispatch custom event for other components
+                window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme: newTheme } }));
+            }
+            
+            // Add click event listener
+            if (themeToggle) {
+                themeToggle.addEventListener('click', toggleTheme);
+                
+                // Add keyboard support
+                themeToggle.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleTheme();
+                    }
+                });
+            }
+            
+            // Export toggle function for external use
+            window.toggleTheme = toggleTheme;
+        })();
+    </script>
     <script src="app.js" defer></script>
 </body>
 </html>

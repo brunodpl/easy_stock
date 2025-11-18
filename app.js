@@ -311,36 +311,30 @@ function renderProductsTable() {
   tbody.innerHTML = appState.products.map(product => {
     // Check stock status
     let stockClass = '';
-    let stockStyle = '';
     
     if (product.stock_actual <= product.stockMin * 0.5) {
       stockClass = 'stock-critical';
-      stockStyle = 'background-color: #fee; color: #c00; font-weight: bold; padding: 4px 8px; border-radius: 4px;';
     } else if (product.stock_actual <= product.stockMin) {
       stockClass = 'stock-warning';
-      stockStyle = 'background-color: #ffc; color: #880; font-weight: bold; padding: 4px 8px; border-radius: 4px;';
     }
     
     // Check expiration status
     const daysUntilExpiration = getDaysUntilExpiration(product.caducidad);
     let expirationClass = '';
-    let expirationStyle = '';
     
     if (daysUntilExpiration < 2) {
       expirationClass = 'expiration-critical';
-      expirationStyle = 'background-color: #fee; color: #c00; font-weight: bold; padding: 2px 6px; border-radius: 4px;';
     } else if (daysUntilExpiration >= 2 && daysUntilExpiration <= 7) {
       expirationClass = 'expiration-warning';
-      expirationStyle = 'background-color: #ffc; color: #880; font-weight: bold; padding: 2px 6px; border-radius: 4px;';
     }
     
     return `
       <tr>
         <td><strong>${product.sku}</strong></td>
         <td>${product.nombre}</td>
-        <td><span class="${stockClass}" style="${stockStyle}"><strong>${product.stock_actual}</strong> uds</span></td>
+        <td><span class="${stockClass}"><strong>${product.stock_actual}</strong> uds</span></td>
         <td>${product.ubicacion}</td>
-        <td><span class="${expirationClass}" style="${expirationStyle}">${product.caducidad}${daysUntilExpiration < 8 ? ` (${daysUntilExpiration}d)` : ''}</span></td>
+        <td><span class="${expirationClass}">${product.caducidad}${daysUntilExpiration < 8 ? ` (${daysUntilExpiration}d)` : ''}</span></td>
         <td>€${product.precio_unitario.toFixed(2)}</td>
       </tr>
     `;

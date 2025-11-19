@@ -28,7 +28,7 @@ El sistema genera alertas automáticamente basadas en:
 
 ### Requisitos Previos
 - Node.js (v14 o superior)
-- Navegador moderno con soporte para Web Speech API (Chrome, Edge recomendados)
+- Navegador con soporte para Web Speech API (Chrome, Edge recomendados)
 
 ### Instalación
 
@@ -65,11 +65,10 @@ easy_stock/
 ## 💻 Tecnologías Utilizadas
 
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript (ES6+)
-- **Backend**: Node.js, Express
+- **Backend**: Node.js, Express, Python
 - **APIs**: Web Speech API (reconocimiento de voz)
 - **Estilos**: CSS Variables, Flexbox, Grid
 - **PWA**: Manifest.json, Service Worker ready
-- **Optimizaciones**: Cache headers, Lazy loading, Defer scripts
 
 ## ⚡ Optimizaciones de Rendimiento
 
@@ -84,18 +83,50 @@ easy_stock/
 ## 📊 KPIs y Métricas
 
 El dashboard muestra en tiempo real:
+### KPIs del Dashboard
 
-1. **Total de Productos**: Suma de unidades en inventario
-2. **Valor Total**: Valor monetario del stock actual
-3. **Alertas Activas**: Número de alertas críticas y de atención
-4. **Excesos de Stock**: Productos por encima del stock máximo
+**Inventario**
+- 🟢 **Total de productos**: unidades totales en inventario  
+- 🔴 **Valor total del inventario**: valor monetario del stock actual  
+- 🟡 **Valor promedio por SKU**: valor medio por producto  
 
-## 🔮 Roadmap Futuro
+**Alertas**
+- 🔴 **Alertas activas**: total de alertas sin resolver  
+- 🔴 **Alertas críticas**: máxima prioridad  
+- 🟡 **Alertas de atención**: prioridad media  
+- 🟢 **Alertas leves**: baja prioridad  
+- 🔵 **Alertas informativas**: notificaciones generales  
 
-### Machine Learning (Planificado)
-- **Predicción de Demanda**: Algoritmos ML para anticipar necesidades de stock
-- **Optimización Automática**: Sugerencias de reorden basadas en patrones históricos
-- **Análisis de Tendencias**: Identificación de productos con mayor rotación
+**Stock & Caducidad**
+- 🔴 **Excesos de stock**: productos por encima del stock máximo  
+- 🔴 **Stock crítico**: por debajo del 50% del mínimo  
+- 🟡 **Stock bajo**: entre 50% y 100% del mínimo  
+- 🔴 **Productos caducados**: fecha de vencimiento pasada  
+- 🔴 **Caducidad inminente (< 2 días)**  
+- 🟡 **Caducidad próxima (2–7 días)**  
+- 🔴 **Valor en riesgo de caducidad**: valor monetario de productos que caducan en < 7 días  
+
+**Facturación & Espacio**
+- 🔴 **Facturas pendientes**: sin pagar  
+- 🔴 **Facturas vencidas**: fuera de plazo  
+- 🔴 **% de espacio ocupado**: porcentaje de capacidad utilizada  
+- 🔴 **Puntuación de salud general**: score 0–100 del almacén  
+
+**Los calculos SQL de los KPI estarán en el apartado Base de Datos**
+
+## 🔮 Roadmap
+
+✅ Dashboard básico en JavaScript
+
+✅ Frontend con interfaz touch-friendly
+
+🔄 Base de datos: Supabase (en implementación)
+
+❌ Control por voz: NO implementado
+
+❌ Procesamiento CSV + LLM: Pendiente
+
+❌ ML predictions: Pendiente
 
 > **Nota**: La implementación de ML está planificada para cuando se disponga de datos históricos suficientes. Muchos negocios objetivo no cuentan con sistemas de recopilación de datos estructurados.
 
@@ -121,6 +152,69 @@ Consideraciones en evaluación:
 - Optimización para consultas en tiempo real
 - Escalabilidad horizontal
 
+#### Cálculos SQL de KPI's
+
+```sql
+-- 1. Total de Productos
+SUM(current_stock)
+
+-- 2. SKUs Únicos Activos
+COUNT(DISTINCT sku)
+
+-- 3. Valor Total del Inventario
+SUM(current_stock * unit_price)
+
+-- 4. Valor Promedio por SKU
+AVG(current_stock * unit_price)
+
+-- 5. Alertas Activas
+COUNT(*) WHERE resolved = false
+
+-- 6. Alertas Críticas
+COUNT(*) WHERE alert_type = 'critica' AND resolved = false
+
+-- 7. Alertas de Atención
+COUNT(*) WHERE alert_type = 'atencion' AND resolved = false
+
+-- 8. Alertas Leves
+COUNT(*) WHERE alert_type = 'leve' AND resolved = false
+
+-- 9. Alertas Informativas
+COUNT(*) WHERE alert_type = 'informativa' AND resolved = false
+
+-- 10. Excesos de Stock
+COUNT(*) WHERE current_stock > max_stock
+
+-- 11. Stock Crítico
+COUNT(*) WHERE current_stock <= min_stock * 0.5
+
+-- 12. Stock Bajo
+COUNT(*) WHERE current_stock > min_stock * 0.5 AND current_stock <= min_stock
+
+-- 13. Productos Caducados
+COUNT(*) WHERE expiration_date < CURRENT_DATE
+
+-- 14. Caducidad Inminente (< 2 días)
+COUNT(*) WHERE expiration_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 2
+
+-- 15. Caducidad Próxima (2–7 días)
+COUNT(*) WHERE expiration_date BETWEEN CURRENT_DATE + 2 AND CURRENT_DATE + 7
+
+-- 16. Valor en Riesgo de Caducidad
+SUM(current_stock * unit_price) WHERE expiration_date <= CURRENT_DATE + 7
+
+-- 17. Facturas Pendientes
+COUNT(*) WHERE status = 'pendiente'
+
+-- 18. Facturas Vencidas
+COUNT(*) WHERE due_date < CURRENT_DATE AND status != 'pagada'
+
+-- 19. % Espacio Ocupado
+(SUM(current_stock) / capacidad_maxima) * 100
+
+-- 20. Puntuación de Salud General
+-- Ver función calculateWarehouseHealth() actual
+
 ## 🤝 Contribuciones
 
 Las contribuciones son bienvenidas. Para cambios importantes:
@@ -137,10 +231,12 @@ Este proyecto está bajo la Licencia ISC.
 
 ## 👤 Autor
 
-**Bruno Del Pino López**
+**Bruno Del Palacio Rodríguez**
 - GitHub: [@brunodpl](https://github.com/brunodpl)
 
 ## 📞 Soporte
+
+brundata00@gmail.com
 
 Para reportar problemas o sugerencias, por favor abre un [issue](https://github.com/brunodpl/easy_stock/issues) en GitHub.
 

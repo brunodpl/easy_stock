@@ -1,0 +1,439 @@
+-- ============================================
+-- EASY STOCK - DATABASE SCHEMA v3.0
+-- Sistema de Gestión de Almacén
+-- ============================================
+
+-- Habilitar extensiones necesarias
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm"; -- Para búsquedas difusas
+
+-- ============================================
+-- 1. TABLA WAREHOUSE_CONFIG (Configuración Global)
+-- ============================================
+CREATE TABLE warehouse_config (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1), -- Solo 1 fila permitida
+  
+  -- Identificación
+  warehouse_name VARCHAR(255) DEFAULT 'Mi Almacén',
+  
+  -- Capacidad
+  total_capacity INTEGER DEFAULT 18,
+  units_of_measure VARCHAR(50) DEFAULT 'm2',
+  total_zones INTEGER DEFAULT 2,
+  
+  -- Umbrales de alertas globales
+  expiry_warning_days INTEGER DEFAULT 7,
+  
+  -- Configuración de salud del almacén
+  max_health_score INTEGER DEFAULT 100,
+  
+  -- Timestamps
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Índice para garantizar singleton
+CREATE UNIQUE INDEX idx_warehouse_config_singleton ON warehouse_config(id);
+
+-- Insertar configuración inicial
+INSERT INTO warehouse_config (id, warehouse_name, total_capacity, total_zones) 
+VALUES (1, 'Almacén Principal', 18, 2);
+
+COMMENT ON TABLE warehouse_config IS 'Configuración global del almacén (solo 1 fila permitida)';
+
+-- ============================================
+-- 2. TABLA ZONES (Zonas del Almacén)
+-- ============================================
+CREATE TABLE zones (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  code VARCHAR(50) UNIQUE NOT NULL, -- 'A', 'B', etc.
+  name VARCHAR(255) NOT NULL,
+  
+  -- Capacidad
+  max_capacity INTEGER NOT NULL CHECK (max_capacity > 0),
+  units_of_measure VARCHAR(50) DEFAULT 'm2',
+  
+  -- Características
+  zone_type VARCHAR(50) DEFAULT 'normal', -- 'normal', 'refrigerada', 'peligrosa'
+  temperature_controlled BOOLEAN DEFAULT FALSE,
+  
+  -- Estado
+  active BOOLEAN DEFAULT TRUE,
+  
+  -- Auditoría
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_zones_code ON zones(code);
+CREATE INDEX idx_zones_active ON zones(active);
+
+COMMENT ON TABLE zones IS 'Zonas físicas del almacén para organización espacial';
+
+-- ============================================
+-- 3. TABLA PRODUCTS (Productos del Inventario)
+-- ============================================
+CREATE TABLE products (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  
+  -- Identificación
+  sku VARCHAR(50) UNIQUE NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  category VARCHAR(100), -- 'Lácteos', 'Panadería', etc.
+  barcode VARCHAR(100),
+  
+  -- Stock
+  current_stock INTEGER DEFAULT 0 CHECK (current_stock >= 0),
+  min_stock INTEGER DEFAULT 10,
+  max_stock INTEGER DEFAULT 100,
+  
+  -- Precio
+  unit_price DECIMAL(10, 2) NOT NULL CHECK (unit_price >= 0),
+  currency VARCHAR(3) DEFAULT 'EUR',
+  
+  -- Ubicación
+  location VARCHAR(100), -- 'A-01', 'B-02'
+  zone VARCHAR(50),
+  
+  -- Caducidad
+  expiration_date DATE,
+  
+  -- Proveedor
+  supplier VARCHAR(255),
+  
+  -- Soft delete
+  deleted_at TIMESTAMP NULL,
+  
+  -- Auditoría
+  date_added TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Índices para búsquedas rápidas
+CREATE INDEX idx_products_sku ON products(sku);
+CREATE INDEX idx_products_category ON products(category);
+CREATE INDEX idx_products_location ON products(location);
+CREATE INDEX idx_products_expiration ON products(expiration_date);
+CREATE INDEX idx_products_stock ON products(current_stock);
+CREATE INDEX idx_products_deleted ON products(deleted_at);
+
+-- Búsqueda full-text para nombres
+CREATE INDEX idx_products_name_trgm ON products USING gin(name gin_trgm_ops);
+
+COMMENT ON TABLE products IS 'Inventario de productos del almacén';
+
+-- ============================================
+-- 4. TABLA STOCK_MOVEMENTS (Movimientos de Stock)
+-- ============================================
+CREATE TABLE stock_movements (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+  
+  -- Tipo de movimiento
+  movement_type VARCHAR(20) NOT NULL CHECK (movement_type IN ('entrada', 'salida', 'ajuste', 'devolucion', 'merma')),
+  
+  -- Cantidad
+  quantity INTEGER NOT NULL,
+  quantity_before INTEGER,
+  quantity_after INTEGER,
+  
+  -- Referencia
+  reference VARCHAR(100),
+  document_type VARCHAR(50), -- 'factura', 'albaran', 'pedido', 'ajuste_manual'
+  
+  -- Costos
+  cost_per_unit DECIMAL(10, 2),
+  total_cost DECIMAL(10, 2),
+  
+  -- Usuario y auditoría
+  created_by UUID, -- Futuro: FK a tabla users
+  created_at TIMESTAMP DEFAULT NOW(),
+  
+  -- Notas
+  notes TEXT
+);
+
+CREATE INDEX idx_movements_product ON stock_movements(product_id);
+CREATE INDEX idx_movements_type ON stock_movements(movement_type);
+CREATE INDEX idx_movements_date ON stock_movements(created_at);
+CREATE INDEX idx_movements_reference ON stock_movements(reference);
+
+COMMENT ON TABLE stock_movements IS 'Historial de movimientos de stock (entradas, salidas, ajustes)';
+
+-- ============================================
+-- 5. TABLA ALERTS (Sistema de Alertas)
+-- ============================================
+CREATE TABLE alerts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+  
+  -- Tipo y categoría
+  alert_type VARCHAR(20) NOT NULL CHECK (alert_type IN ('critica', 'atencion', 'leve', 'informativa')),
+  category VARCHAR(50), -- 'stock_bajo', 'stock_critico', 'caducidad_inminente', etc.
+  
+  -- Mensaje
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  
+  -- Estado
+  resolved BOOLEAN DEFAULT FALSE,
+  resolved_at TIMESTAMP NULL,
+  resolved_by UUID, -- Futuro: métricas de productividad
+  
+  -- Auto-generada o manual
+  auto_generated BOOLEAN DEFAULT TRUE,
+  
+  -- Auditoría
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_alerts_product ON alerts(product_id);
+CREATE INDEX idx_alerts_type ON alerts(alert_type);
+CREATE INDEX idx_alerts_category ON alerts(category);
+CREATE INDEX idx_alerts_resolved ON alerts(resolved);
+CREATE INDEX idx_alerts_created ON alerts(created_at);
+
+COMMENT ON TABLE alerts IS 'Sistema de alertas automáticas y manuales del almacén';
+
+-- ============================================
+-- 6. TABLA INVOICES (Facturas Pendientes)
+-- ============================================
+CREATE TABLE invoices (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  
+  -- Identificación
+  invoice_number VARCHAR(100) UNIQUE NOT NULL,
+  supplier_name VARCHAR(255) NOT NULL,
+  nif_cif VARCHAR(50),
+  
+  -- Importes
+  subtotal DECIMAL(10, 2) NOT NULL,
+  tax_amount DECIMAL(10, 2) DEFAULT 0,
+  total_amount DECIMAL(10, 2) NOT NULL,
+  currency VARCHAR(3) DEFAULT 'EUR',
+  
+  -- Fechas
+  invoice_date DATE NOT NULL,
+  limit_date DATE NOT NULL,
+  paid_date DATE,
+  
+  -- Estado
+  status VARCHAR(20) DEFAULT 'pendiente' CHECK (status IN ('pendiente', 'pagada', 'vencida', 'cancelada')),
+  
+  -- Forma de pago
+  payment_method VARCHAR(50), -- 'transferencia', 'tarjeta', 'efectivo'
+  payment_reference VARCHAR(100),
+  
+  -- Documentos
+  file_path TEXT,
+  
+  -- Notas
+  notes TEXT,
+  
+  -- Auditoría
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX idx_invoices_supplier ON invoices(supplier_name);
+CREATE INDEX idx_invoices_due_date ON invoices(limit_date);
+CREATE INDEX idx_invoices_status ON invoices(status);
+
+COMMENT ON TABLE invoices IS 'Gestión de facturas pendientes y próximas a pagar';
+
+-- ============================================
+-- 7. TRIGGERS AUTOMÁTICOS (Solo integridad básica)
+-- ============================================
+
+-- Trigger: Actualizar updated_at
+CREATE OR REPLACE FUNCTION update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_warehouse_config_updated
+BEFORE UPDATE ON warehouse_config
+FOR EACH ROW
+EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER trg_products_updated
+BEFORE UPDATE ON products
+FOR EACH ROW
+EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER trg_zones_updated
+BEFORE UPDATE ON zones
+FOR EACH ROW
+EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER trg_alerts_updated
+BEFORE UPDATE ON alerts
+FOR EACH ROW
+EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER trg_invoices_updated
+BEFORE UPDATE ON invoices
+FOR EACH ROW
+EXECUTE FUNCTION update_timestamp();
+
+-- Trigger: Prevenir múltiples filas en warehouse_config
+CREATE OR REPLACE FUNCTION enforce_singleton_config()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (SELECT COUNT(*) FROM warehouse_config) >= 1 AND TG_OP = 'INSERT' THEN
+    RAISE EXCEPTION 'Solo puede existir una fila de configuración. Use UPDATE.';
+  END IF;
+  
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'No se puede eliminar la configuración del almacén.';
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_enforce_singleton_config
+BEFORE INSERT OR DELETE ON warehouse_config
+FOR EACH ROW
+EXECUTE FUNCTION enforce_singleton_config();
+
+-- Trigger: Registrar stock_before y stock_after en movimientos
+CREATE OR REPLACE FUNCTION track_stock_movement()
+RETURNS TRIGGER AS $$
+DECLARE
+  current_stock_value INTEGER;
+BEGIN
+  -- Obtener stock actual
+  SELECT current_stock INTO current_stock_value FROM products WHERE id = NEW.product_id;
+  
+  -- Establecer quantity_before
+  NEW.quantity_before := current_stock_value;
+  
+  -- Calcular quantity_after según tipo de movimiento
+  IF NEW.movement_type IN ('entrada', 'devolucion') THEN
+    NEW.quantity_after := current_stock_value + NEW.quantity;
+  ELSIF NEW.movement_type IN ('salida', 'merma') THEN
+    NEW.quantity_after := current_stock_value - NEW.quantity;
+  ELSIF NEW.movement_type = 'ajuste' THEN
+    NEW.quantity_after := NEW.quantity; -- Ajuste absoluto
+  END IF;
+  
+  -- Actualizar stock en productos
+  UPDATE products SET current_stock = NEW.quantity_after, updated_at = NOW() 
+  WHERE id = NEW.product_id;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_track_stock_movement
+BEFORE INSERT ON stock_movements
+FOR EACH ROW
+EXECUTE FUNCTION track_stock_movement();
+
+-- ============================================
+-- 8. VISTAS PARA DASHBOARD
+-- ============================================
+
+-- Vista: KPIs Principales
+CREATE OR REPLACE VIEW dashboard_kpis AS
+SELECT 
+  -- Inventario
+  COUNT(DISTINCT sku) as unique_skus,
+  SUM(current_stock) as total_products,
+  COALESCE(SUM(current_stock * unit_price), 0) as total_inventory_value,
+  
+  -- Alertas activas
+  (SELECT COUNT(*) FROM alerts WHERE resolved = FALSE) as active_alerts,
+  (SELECT COUNT(*) FROM alerts WHERE resolved = FALSE AND alert_type = 'critica') as critical_alerts,
+  (SELECT COUNT(*) FROM alerts WHERE resolved = FALSE AND alert_type = 'atencion') as attention_alerts,
+  
+  -- Stock
+  COUNT(*) FILTER (WHERE current_stock > max_stock) as excess_stock,
+  COUNT(*) FILTER (WHERE current_stock <= min_stock * 0.5) as critical_stock,
+  COUNT(*) FILTER (WHERE current_stock > min_stock * 0.5 AND current_stock <= min_stock) as low_stock,
+  COUNT(*) FILTER (WHERE current_stock = 0) as no_stock,
+  
+  -- Caducidad
+  COUNT(*) FILTER (WHERE expiration_date < CURRENT_DATE) as expired_products,
+  COUNT(*) FILTER (WHERE expiration_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 2) as expiring_critical,
+  COUNT(*) FILTER (WHERE expiration_date BETWEEN CURRENT_DATE + 2 AND CURRENT_DATE + 7) as expiring_soon,
+  
+  -- Facturas
+  (SELECT COUNT(*) FROM invoices WHERE status = 'pendiente') as pending_invoices,
+  (SELECT COUNT(*) FROM invoices WHERE limit_date < CURRENT_DATE AND status != 'pagada') as overdue_invoices,
+  
+  -- Salud del almacén (0-100)
+  GREATEST(0, 100 - (
+    (SELECT COUNT(*) FROM alerts WHERE resolved = FALSE AND alert_type = 'critica') * 10 +
+    (SELECT COUNT(*) FROM alerts WHERE resolved = FALSE AND alert_type = 'atencion') * 5
+  )) as warehouse_health_score
+  
+FROM products
+WHERE deleted_at IS NULL;
+
+COMMENT ON VIEW dashboard_kpis IS 'KPIs principales para el dashboard en tiempo real';
+
+-- Vista: Productos con Alertas Activas
+CREATE OR REPLACE VIEW products_with_alerts AS
+SELECT 
+  p.*,
+  COUNT(a.id) as active_alerts,
+  COUNT(a.id) FILTER (WHERE a.alert_type = 'critica') as critical_alerts,
+  COUNT(a.id) FILTER (WHERE a.alert_type = 'atencion') as attention_alerts,
+  STRING_AGG(DISTINCT a.category, ', ') as alert_categories
+FROM products p
+LEFT JOIN alerts a ON p.id = a.product_id AND a.resolved = FALSE
+WHERE p.deleted_at IS NULL
+GROUP BY p.id;
+
+COMMENT ON VIEW products_with_alerts IS 'Productos con conteo de alertas activas';
+
+-- Vista: Facturas Próximos 7 Días
+CREATE OR REPLACE VIEW invoices_next_week AS
+SELECT 
+  invoice_number,
+  supplier_name,
+  total_amount,
+  currency,
+  limit_date,
+  limit_date - CURRENT_DATE as days_until_due
+FROM invoices
+WHERE status = 'pendiente'
+  AND limit_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
+ORDER BY limit_date ASC;
+
+COMMENT ON VIEW invoices_next_week IS 'Facturas pendientes con vencimiento en los próximos 7 días';
+
+-- ============================================
+-- 9. DATOS DE EJEMPLO (OPCIONAL - Para testing)
+-- ============================================
+
+-- Zonas de ejemplo
+INSERT INTO zones (code, name, max_capacity, zone_type) VALUES
+  ('A', 'Zona A - Secos', 10, 'normal'),
+  ('B', 'Zona B - Refrigerados', 8, 'refrigerada');
+
+-- Productos de ejemplo
+INSERT INTO products (sku, name, category, current_stock, min_stock, max_stock, unit_price, location, zone, expiration_date, supplier) VALUES
+  ('LAC-001', 'Leche Entera 1L', 'Lácteos', 24, 20, 50, 1.20, 'A-01', 'B', '2025-11-25', 'Lácteos García'),
+  ('PAN-002', 'Pan Integral 500g', 'Panadería', 5, 15, 40, 2.50, 'A-02', 'A', '2025-11-20', 'Panadería López'),
+  ('ACE-003', 'Aceite de Oliva 1L', 'Aceites', 65, 20, 60, 8.90, 'B-01', 'A', '2026-06-01', 'Aceites del Sur'),
+  ('CER-004', 'Arroz Blanco 1kg', 'Cereales', 35, 25, 80, 1.80, 'B-02', 'A', NULL, 'Distribuciones Martín'),
+  ('CON-005', 'Tomate Frito 400g', 'Conservas', 2, 10, 30, 1.45, 'C-01', 'A', '2025-11-22', 'Conservas del Norte');
+
+-- Facturas de ejemplo
+INSERT INTO invoices (invoice_number, supplier_name, nif_cif, subtotal, tax_amount, total_amount, invoice_date, limit_date, status) VALUES
+  ('FAC-2025-001', 'Distribuciones López S.L.', 'B12345678', 450.00, 94.50, 544.50, '2025-11-15', '2025-11-25', 'pendiente'),
+  ('FAC-2025-002', 'Alimentación García', 'B87654321', 320.00, 67.20, 387.20, '2025-11-10', '2025-11-20', 'vencida');
+
+-- ============================================
+-- FIN DEL SCRIPT
+-- ============================================
+
+SELECT 'Base de datos Easy Stock v3.0 creada correctamente!' as status;

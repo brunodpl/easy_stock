@@ -25,6 +25,9 @@
 </head>
 <body>
     <div id="app">
+        <!-- Error Banner -->
+        <div id="app-error-banner" style="display:none;padding:12px 16px;margin-bottom:12px;border-radius:8px;background:#fee2e2;color:#991b1b;font-weight:600;border:1px solid #fecaca;"></div>
+
         <!-- Header -->
         <header class="header">
             <div class="header-content">
@@ -136,12 +139,18 @@
                     <!-- Invoices -->
                     <section class="card invoices">
                         <h2>💳 Facturas Próximas</h2>
+                        <div class="section-actions" data-section="invoices">
+                            <button type="button" id="add-invoice-btn" class="action-btn">➕ Nueva factura</button>
+                        </div>
                         <div id="invoices-list" class="invoices-list"></div>
                     </section>
 
                     <!-- Tasks -->
                     <section class="card tasks">
                         <h2>✅ Tareas Prioritarias</h2>
+                        <div class="section-actions" data-section="tasks">
+                            <button type="button" id="add-task-btn" class="action-btn">➕ Nueva tarea</button>
+                        </div>
                         <div id="tasks-list" class="tasks-list"></div>
                     </section>
                 </div>

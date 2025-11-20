@@ -1,7 +1,7 @@
 // Warehouse Management Dashboard Application
 
 // Sample Data
-const sampleData = {
+/* const sampleData = {
   products: [
     {
       id: 1,
@@ -129,33 +129,115 @@ const sampleData = {
     capacity: 1000,
     occupied_percentage: 68
   }
-};
+}; */
 
 // Application State
 let appState = {
   products: [],
   invoices: [],
   tasks: [],
-  warehouseConfig: {},
-  alerts: []
+  warehouseConfig: { capacity: 1000 },
+  alerts: [],
+  kpis: null,
+  errorMessage: ''
 };
 
+let isEditMode = false;
+
+function generateRecordId(prefix) {
+  const timestamp = Date.now().toString().slice(-5);
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `${prefix}-${timestamp}${random}`;
+}
+
+// Normalizers to adapt API responses to the UI data model
+function normalizeProduct(product) {
+  return {
+    id: product.id,
+    nombre: product.nombre || product.name || 'Producto sin nombre',
+    sku: product.sku || 'N/D',
+    stock_actual: product.stock_actual ?? product.currentStock ?? 0,
+    precio_unitario: toNumber(product.precio_unitario ?? product.unitPrice ?? 0),
+    categoria: product.categoria || product.category || 'Sin categoría',
+    caducidad: formatDate(product.caducidad || product.expirationDate),
+    ubicacion: product.ubicacion || product.location || 'Sin ubicación',
+    stockMin: product.stockMin ?? product.minStock ?? 0,
+    stockMax: product.stockMax ?? product.maxStock ?? 0
+  };
+}
+
+function normalizeAlert(alert) {
+  const priorityMap = {
+    critica: 'critical',
+    atencion: 'warning',
+    leve: 'info',
+    informativa: 'info'
+  };
+
+  return {
+    id: alert.id,
+    title: alert.title || alert.message || 'Alerta del sistema',
+    description: formatAlertDescription(alert),
+    priority: alert.priority || priorityMap[alert.alertType] || 'info',
+    type: alert.alertType || 'info'
+  };
+}
+
+function normalizeInvoice(invoice) {
+  return {
+    id: invoice.id || invoice.invoiceNumber || 'N/A',
+    vendor: invoice.vendor || invoice.supplierName || 'Proveedor desconocido',
+    amount: toNumber(invoice.amount ?? invoice.totalAmount ?? 0),
+    dueDate: invoice.dueDate || invoice.limitDate,
+    status: invoice.status || 'pending'
+  };
+}
+
+function formatAlertDescription(alert) {
+  const parts = [];
+  if (alert.message) parts.push(alert.message);
+  if (alert.product?.name || alert.product?.nombre) {
+    parts.push(`Producto: ${alert.product.nombre || alert.product.name}`);
+  }
+  return parts.join(' - ');
+}
+
+function toNumber(value) {
+  if (value === undefined || value === null) return 0;
+  if (typeof value === 'number') return value;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function formatDate(dateValue) {
+  if (!dateValue) return null;
+  const parsed = new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().split('T')[0];
+}
+
 // Initialize Application
-function init() {
+async function init() {
   console.log('Initializing Warehouse Management Dashboard...');
   
   // Load data
-  loadData();
+  try {
+    await loadData();
+  } catch (error) {
+    console.warn('Loading dashboard with fallback data', error);
+  }
   
   // Update UI
   updateCurrentDate();
   updateKPIs();
+  renderErrorBanner();
   renderAlerts();
   renderProductsTable();
   updateWarehouseGauge();
   updateSpaceOccupancy();
   renderInvoices();
   renderTasks();
+  initEditModeControls();
   
   // Initialize voice control
   initVoiceControl();
@@ -163,22 +245,87 @@ function init() {
   console.log('Dashboard initialized successfully!');
 }
 
-// Load Data
-function loadData() {
-  appState.products = sampleData.products;
-  appState.invoices = sampleData.invoices;
-  appState.tasks = sampleData.tasks;
-  appState.warehouseConfig = sampleData.warehouseConfig;
-  
-  // Generate alerts based on product stock
-  generateAlerts();
+// app.js - Reemplazar función loadData()
+
+async function loadData() {
+  try {
+    const [productsRes, alertsRes, invoicesRes, kpisRes, tasksRes] = await Promise.all([
+      fetch('/api/products'),
+      fetch('/api/alerts'),
+      fetch('/api/invoices'),
+      fetch('/api/kpis'),
+      fetch('/api/tasks')
+    ]);
+
+    if (!productsRes.ok) throw new Error('No se pudieron obtener los productos');
+    if (!alertsRes.ok) throw new Error('No se pudieron obtener las alertas');
+    if (!invoicesRes.ok) throw new Error('No se pudieron obtener las facturas');
+    if (!kpisRes.ok) throw new Error('No se pudieron obtener los KPIs');
+    if (!tasksRes.ok) throw new Error('No se pudieron obtener las tareas');
+
+    const [products, alerts, invoices, kpis, tasks] = await Promise.all([
+      productsRes.json(),
+      alertsRes.json(),
+      invoicesRes.json(),
+      kpisRes.json(),
+      tasksRes.json()
+    ]);
+
+    appState.products = Array.isArray(products)
+      ? products.map(normalizeProduct)
+      : [];
+
+    const normalizedAlerts = Array.isArray(alerts)
+      ? alerts.map(normalizeAlert)
+      : [];
+    const autoAlerts = generateAlerts(appState.products);
+    const priorityOrder = { critical: 0, warning: 1, info: 2 };
+    appState.alerts = [...normalizedAlerts, ...autoAlerts]
+      .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+
+    appState.invoices = Array.isArray(invoices)
+      ? invoices.map(normalizeInvoice)
+      : [];
+
+    appState.tasks = Array.isArray(tasks)
+      ? tasks
+      : [];
+
+    appState.kpis = kpis || null;
+    const capacityFromKpis = kpis?.warehouseConfig?.totalCapacity || kpis?.totalCapacity || kpis?.capacity;
+    const occupancyFromKpis = kpis?.warehouseConfig?.occupiedPercentage || kpis?.occupied_percentage || kpis?.occupiedPercentage;
+    appState.warehouseConfig = {
+      capacity: capacityFromKpis || appState.warehouseConfig.capacity || 1000,
+      occupied_percentage: occupancyFromKpis || null
+    };
+
+    console.log('✅ Datos cargados desde base de datos');
+    appState.errorMessage = '';
+  } catch (error) {
+    console.error('❌ Error cargando datos:', error);
+    appState.errorMessage = 'No se pudo cargar la información del servidor. Intenta más tarde.';
+    // Fallback a datos de muestra si falla la API
+    if (typeof sampleData !== 'undefined') {
+      appState.products = sampleData.products || [];
+      appState.invoices = sampleData.invoices || [];
+      appState.alerts = generateAlerts(appState.products);
+    } else {
+      appState.products = [];
+      appState.invoices = [];
+      appState.alerts = [];
+    }
+    throw error;
+  }
 }
+
 
 // Helper function to calculate days until expiration
 function getDaysUntilExpiration(expirationDate) {
+  if (!expirationDate) return Infinity;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const expDate = new Date(expirationDate);
+  if (Number.isNaN(expDate.getTime())) return Infinity;
   expDate.setHours(0, 0, 0, 0);
   const diffTime = expDate - today;
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -186,46 +333,46 @@ function getDaysUntilExpiration(expirationDate) {
 }
 
 // Generate Alerts
-function generateAlerts() {
-  appState.alerts = [];
+function generateAlerts(products = appState.products) {
+  const alerts = [];
   
-  appState.products.forEach(product => {
-    // Check expiration alerts
+  products.forEach(product => {
     const daysUntilExpiration = getDaysUntilExpiration(product.caducidad);
     
-    if (daysUntilExpiration < 2) {
-      appState.alerts.push({
-        type: 'critical',
-        title: `⚠️ Caducidad crítica: ${product.nombre}`,
-        description: `Caduca en ${daysUntilExpiration} día(s) - ${product.caducidad}. Ubicación: ${product.ubicacion}`,
-        priority: 'critical'
-      });
-    } else if (daysUntilExpiration >= 2 && daysUntilExpiration <= 7) {
-      appState.alerts.push({
-        type: 'warning',
-        title: `⏰ Próximo a caducar: ${product.nombre}`,
-        description: `Caduca en ${daysUntilExpiration} días - ${product.caducidad}. Ubicación: ${product.ubicacion}`,
-        priority: 'warning'
-      });
+    if (Number.isFinite(daysUntilExpiration)) {
+      if (daysUntilExpiration < 2) {
+        alerts.push({
+          type: 'critical',
+          title: `Caducidad crítica: ${product.nombre}`,
+          description: `Caduca en ${daysUntilExpiration} día(s) - ${product.caducidad}. Ubicación: ${product.ubicacion}`,
+          priority: 'critical'
+        });
+      } else if (daysUntilExpiration >= 2 && daysUntilExpiration <= 7) {
+        alerts.push({
+          type: 'warning',
+          title: `Próximo a caducar: ${product.nombre}`,
+          description: `Caduca en ${daysUntilExpiration} días - ${product.caducidad}. Ubicación: ${product.ubicacion}`,
+          priority: 'warning'
+        });
+      }
     }
     
-    // Check stock alerts
     if (product.stock_actual <= product.stockMin * 0.5) {
-      appState.alerts.push({
+      alerts.push({
         type: 'critical',
         title: `Stock crítico: ${product.nombre}`,
         description: `Solo quedan ${product.stock_actual} unidades. Ubicación: ${product.ubicacion}`,
         priority: 'critical'
       });
     } else if (product.stock_actual <= product.stockMin) {
-      appState.alerts.push({
+      alerts.push({
         type: 'warning',
         title: `Stock bajo: ${product.nombre}`,
         description: `${product.stock_actual} unidades disponibles. Ubicación: ${product.ubicacion}`,
         priority: 'warning'
       });
     } else if (product.stock_actual >= product.stockMax) {
-      appState.alerts.push({
+      alerts.push({
         type: 'info',
         title: `Exceso de stock: ${product.nombre}`,
         description: `${product.stock_actual} unidades (máx: ${product.stockMax}). Ubicación: ${product.ubicacion}`,
@@ -234,9 +381,8 @@ function generateAlerts() {
     }
   });
   
-  // Sort alerts by priority
   const priorityOrder = { critical: 0, warning: 1, info: 2 };
-  appState.alerts.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+  return alerts.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 }
 
 // Update Current Date
@@ -251,22 +397,23 @@ function updateCurrentDate() {
 
 // Update KPIs
 function updateKPIs() {
+  const kpis = appState.kpis;
   // Total Products
-  const totalProducts = appState.products.reduce((sum, p) => sum + p.stock_actual, 0);
+  const totalProducts = kpis?.totalProducts ?? appState.products.reduce((sum, p) => sum + p.stock_actual, 0);
   const totalProductsElement = document.getElementById('kpi-total-products');
   if (totalProductsElement) {
     totalProductsElement.textContent = totalProducts.toLocaleString('es-ES');
   }
   
   // Total Value
-  const totalValue = appState.products.reduce((sum, p) => sum + (p.stock_actual * p.precio_unitario), 0);
+  const totalValue = kpis?.totalValue ?? appState.products.reduce((sum, p) => sum + (p.stock_actual * p.precio_unitario), 0);
   const totalValueElement = document.getElementById('kpi-total-value');
   if (totalValueElement) {
     totalValueElement.textContent = `€${totalValue.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
   
   // Active Alerts
-  const alertsCount = appState.alerts.filter(a => a.priority === 'critical' || a.priority === 'warning').length;
+  const alertsCount = kpis?.alertsCount ?? appState.alerts.filter(a => a.priority === 'critical' || a.priority === 'warning').length;
   const alertsElement = document.getElementById('kpi-alerts');
   if (alertsElement) {
     alertsElement.textContent = alertsCount;
@@ -294,7 +441,7 @@ function renderAlerts() {
     <div class="alert-item ${alert.priority}">
       <div class="alert-content">
         <div class="alert-title">${alert.title}</div>
-        <div class="alert-description">${alert.description}</div>
+        <div class="alert-description">${alert.description || 'Sin detalles adicionales'}</div>
       </div>
       <div class="alert-badge ${alert.priority}">
         ${alert.priority === 'critical' ? 'CRÍTICO' : alert.priority === 'warning' ? 'AVISO' : 'INFO'}
@@ -327,6 +474,10 @@ function renderProductsTable() {
     } else if (daysUntilExpiration >= 2 && daysUntilExpiration <= 7) {
       expirationClass = 'expiration-warning';
     }
+    const expirationLabel = product.caducidad || 'Sin fecha';
+    const expirationSuffix = Number.isFinite(daysUntilExpiration) && daysUntilExpiration < 8
+      ? ` (${daysUntilExpiration}d)`
+      : '';
     
     return `
       <tr>
@@ -334,7 +485,7 @@ function renderProductsTable() {
         <td>${product.nombre}</td>
         <td><span class="${stockClass}"><strong>${product.stock_actual}</strong> uds</span></td>
         <td>${product.ubicacion}</td>
-        <td><span class="${expirationClass}">${product.caducidad}${daysUntilExpiration < 8 ? ` (${daysUntilExpiration}d)` : ''}</span></td>
+        <td><span class="${expirationClass}">${expirationLabel}${expirationSuffix}</span></td>
         <td>€${product.precio_unitario.toFixed(2)}</td>
       </tr>
     `;
@@ -360,7 +511,7 @@ function calculateWarehouseHealth() {
   
   // Factor 2: Eficiencia de ocupación (peso: 30%)
   const totalStock = appState.products.reduce((sum, p) => sum + p.stock_actual, 0);
-  const capacity = appState.warehouseConfig.capacity || 1000;
+  const capacity = toNumber(appState.warehouseConfig.capacity) || 1000;
   const occupancyRate = (totalStock / capacity) * 100;
   
   // Ocupación óptima entre 60-85%
@@ -438,8 +589,8 @@ function updateWarehouseGauge() {
 // Update Space Occupancy
 function updateSpaceOccupancy() {
   const totalStock = appState.products.reduce((sum, p) => sum + p.stock_actual, 0);
-  const capacity = appState.warehouseConfig.capacity || 1000;
-  const percentage = Math.min((totalStock / capacity) * 100, 100);
+  const capacity = toNumber(appState.warehouseConfig.capacity) || 1000;
+  const percentage = capacity > 0 ? Math.min((totalStock / capacity) * 100, 100) : 0;
   
   const spaceBarFill = document.getElementById('space-bar-fill');
   const spaceBarLabel = document.getElementById('space-bar-label');
@@ -469,10 +620,13 @@ function renderInvoices() {
   if (!invoicesList) return;
   
   invoicesList.innerHTML = appState.invoices.map(invoice => {
-    const dueDate = new Date(invoice.dueDate);
     const today = new Date();
-    const isOverdue = dueDate < today;
-    const dueDateFormatted = dueDate.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+    const dueDate = invoice.dueDate ? new Date(invoice.dueDate) : null;
+    const isValidDate = dueDate && !Number.isNaN(dueDate.getTime());
+    const isOverdue = isValidDate ? dueDate < today : false;
+    const dueDateFormatted = isValidDate
+      ? dueDate.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
+      : 'Sin fecha definida';
     
     return `
       <div class="invoice-item ${isOverdue ? 'overdue' : ''}">
@@ -573,4 +727,110 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {
   init();
+}
+
+function renderErrorBanner() {
+  const banner = document.getElementById('app-error-banner');
+  if (!banner) return;
+  if (appState.errorMessage) {
+    banner.textContent = appState.errorMessage;
+    banner.style.display = 'block';
+  } else {
+    banner.textContent = '';
+    banner.style.display = 'none';
+  }
+}
+
+function initEditModeControls() {
+  const editToggle = document.getElementById('edit-mode-toggle');
+  if (!editToggle) return;
+
+  const addInvoiceBtn = document.getElementById('add-invoice-btn');
+  const addTaskBtn = document.getElementById('add-task-btn');
+  const defaultLabel = editToggle.textContent.trim() || 'Editar';
+  const activeLabel = 'Cerrar edición';
+
+  const updateUI = () => {
+    document.body.classList.toggle('edit-mode-active', isEditMode);
+    editToggle.textContent = isEditMode ? activeLabel : defaultLabel;
+    editToggle.setAttribute('aria-pressed', String(isEditMode));
+  };
+
+  const toggleEditMode = () => {
+    isEditMode = !isEditMode;
+    updateUI();
+  };
+
+  editToggle.type = 'button';
+  editToggle.setAttribute('aria-pressed', 'false');
+  editToggle.addEventListener('click', toggleEditMode);
+  editToggle.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggleEditMode();
+    }
+  });
+
+  if (addInvoiceBtn) {
+    addInvoiceBtn.addEventListener('click', () => {
+      if (!isEditMode) return;
+      const newInvoice = promptNewInvoice();
+      if (newInvoice) {
+        appState.invoices = [newInvoice, ...appState.invoices];
+        renderInvoices();
+      }
+    });
+  }
+
+  if (addTaskBtn) {
+    addTaskBtn.addEventListener('click', () => {
+      if (!isEditMode) return;
+      const newTask = promptNewTask();
+      if (newTask) {
+        appState.tasks = [newTask, ...appState.tasks];
+        renderTasks();
+      }
+    });
+  }
+
+  updateUI();
+}
+
+function promptNewInvoice() {
+  const vendor = window.prompt('Proveedor de la factura:');
+  if (!vendor) return null;
+
+  const amountInput = window.prompt('Importe estimado (€):', '0');
+  if (amountInput === null) return null;
+  const amount = toNumber(amountInput);
+
+  const dueDate = window.prompt('Fecha de vencimiento (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+  if (dueDate === null) return null;
+
+  return {
+    id: generateRecordId('INV'),
+    vendor,
+    amount,
+    dueDate,
+    status: 'pending'
+  };
+}
+
+function promptNewTask() {
+  const title = window.prompt('Título de la tarea:');
+  if (!title) return null;
+
+  const assignedTo = window.prompt('Responsable principal:') || 'Sin asignar';
+  const supervisor = window.prompt('Supervisor de la tarea:') || 'Sin supervisor';
+  const phone = window.prompt('Teléfono de contacto:', '+34 600 000 000') || '';
+  const priority = (window.prompt('Prioridad (high, medium, low):', 'medium') || 'medium').toLowerCase();
+
+  return {
+    id: generateRecordId('TASK'),
+    title,
+    assignedTo,
+    supervisor,
+    phone,
+    priority: ['high', 'medium', 'low'].includes(priority) ? priority : 'medium'
+  };
 }

@@ -743,6 +743,38 @@ pre code {
   border-bottom: 2px solid rgba(102, 126, 234, 0.1);
 }
 
+.section-actions {
+  display: none;
+  align-items: center;
+  gap: var(--space-12);
+  margin-bottom: var(--space-16);
+}
+
+body.edit-mode-active .section-actions {
+  display: flex;
+}
+
+.action-btn {
+  padding: var(--space-8) var(--space-16);
+  border-radius: var(--radius-base);
+  border: none;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
+  color: var(--color-btn-primary-text);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  transition: transform var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.action-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.action-btn:active {
+  transform: scale(0.97);
+}
+
 /* Alerts Panel */
 .alerts-panel {
   border-top: 4px solid #ef4444;

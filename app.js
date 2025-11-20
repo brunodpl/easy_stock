@@ -143,12 +143,25 @@ let appState = {
 };
 
 let isEditMode = false;
-
-function generateRecordId(prefix) {
-  const timestamp = Date.now().toString().slice(-5);
-  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  return `${prefix}-${timestamp}${random}`;
-}
+let deleteHandlersInitialized = false;
+let editModeButton = null;
+let editModeButtonDefaultLabel = 'Editar';
+const editSession = {
+  snapshot: null,
+  invoices: new Map(),
+  tasks: new Map()
+};
+const confirmModalElements = {
+  root: null,
+  summary: null,
+  invoicesSection: null,
+  invoicesList: null,
+  tasksSection: null,
+  tasksList: null,
+  cancelBtn: null,
+  confirmBtn: null
+};
+let isApplyingPendingChanges = false;
 
 // Normalizers to adapt API responses to the UI data model
 function normalizeProduct(product) {
@@ -191,6 +204,25 @@ function normalizeInvoice(invoice) {
     dueDate: invoice.dueDate || invoice.limitDate,
     status: invoice.status || 'pending'
   };
+}
+
+function mapInvoicesForState(invoicesResponse = []) {
+  const now = Date.now();
+  const list = Array.isArray(invoicesResponse) ? invoicesResponse : [];
+  return list.map((invoice, index) => {
+    const normalized = normalizeInvoice(invoice);
+    const uiId = normalized._uiId || String(normalized.id ?? `invoice-${now}-${index}`);
+    return { ...normalized, _uiId: uiId };
+  });
+}
+
+function mapTasksForState(tasksResponse = []) {
+  const now = Date.now();
+  const list = Array.isArray(tasksResponse) ? tasksResponse : [];
+  return list.map((task, index) => {
+    const uiId = task._uiId || String(task.id ?? `task-${now}-${index}`);
+    return { ...task, _uiId: uiId };
+  });
 }
 
 function formatAlertDescription(alert) {
@@ -237,10 +269,12 @@ async function init() {
   updateSpaceOccupancy();
   renderInvoices();
   renderTasks();
-  initEditModeControls();
   
   // Initialize voice control
   initVoiceControl();
+  initEditModeToggle();
+  initDeletionHandlers();
+  initConfirmModal();
   
   console.log('Dashboard initialized successfully!');
 }
@@ -283,13 +317,9 @@ async function loadData() {
     appState.alerts = [...normalizedAlerts, ...autoAlerts]
       .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
-    appState.invoices = Array.isArray(invoices)
-      ? invoices.map(normalizeInvoice)
-      : [];
+    appState.invoices = mapInvoicesForState(invoices);
 
-    appState.tasks = Array.isArray(tasks)
-      ? tasks
-      : [];
+    appState.tasks = mapTasksForState(tasks);
 
     appState.kpis = kpis || null;
     const capacityFromKpis = kpis?.warehouseConfig?.totalCapacity || kpis?.totalCapacity || kpis?.capacity;
@@ -307,11 +337,13 @@ async function loadData() {
     // Fallback a datos de muestra si falla la API
     if (typeof sampleData !== 'undefined') {
       appState.products = sampleData.products || [];
-      appState.invoices = sampleData.invoices || [];
+      appState.invoices = mapInvoicesForState(sampleData.invoices || []);
+      appState.tasks = mapTasksForState(sampleData.tasks || []);
       appState.alerts = generateAlerts(appState.products);
     } else {
       appState.products = [];
       appState.invoices = [];
+      appState.tasks = [];
       appState.alerts = [];
     }
     throw error;
@@ -619,6 +651,11 @@ function renderInvoices() {
   const invoicesList = document.getElementById('invoices-list');
   if (!invoicesList) return;
   
+  if (!appState.invoices || appState.invoices.length === 0) {
+    invoicesList.innerHTML = '<p style="color: var(--color-text-secondary); text-align: center; padding: 20px;">No hay facturas próximas</p>';
+    return;
+  }
+
   invoicesList.innerHTML = appState.invoices.map(invoice => {
     const today = new Date();
     const dueDate = invoice.dueDate ? new Date(invoice.dueDate) : null;
@@ -627,9 +664,15 @@ function renderInvoices() {
     const dueDateFormatted = isValidDate
       ? dueDate.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
       : 'Sin fecha definida';
+    const invoiceId = invoice._uiId || String(invoice.id);
+    const isPending = editSession.invoices.has(invoiceId);
+    const containerClasses = ['invoice-item'];
+    if (isOverdue) containerClasses.push('overdue');
+    if (isPending) containerClasses.push('pending-delete');
     
     return `
-      <div class="invoice-item ${isOverdue ? 'overdue' : ''}">
+      <div class="${containerClasses.join(' ')}">
+        <button type="button" class="item-delete-btn" data-type="invoice" data-id="${invoiceId}" aria-label="Eliminar factura" ${isPending ? 'disabled aria-hidden="true"' : ''}>X</button>
         <div class="invoice-header">
           <div class="invoice-id">${invoice.id}</div>
           <div class="invoice-amount">€${invoice.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
@@ -648,13 +691,25 @@ function renderTasks() {
   const tasksList = document.getElementById('tasks-list');
   if (!tasksList) return;
   
-  tasksList.innerHTML = appState.tasks.map(task => `
-    <div class="task-item ${task.priority}">
-      <div class="task-title">${task.title}</div>
-      <div class="task-assignee">👤 Asignado: <strong>${task.assignedTo}</strong></div>
-      <div class="task-contact">📞 Supervisor: ${task.supervisor} - <a href="tel:${task.phone}">${task.phone}</a></div>
-    </div>
-  `).join('');
+  if (!appState.tasks || appState.tasks.length === 0) {
+    tasksList.innerHTML = '<p style="color: var(--color-text-secondary); text-align: center; padding: 20px;">No hay tareas pendientes</p>';
+    return;
+  }
+
+  tasksList.innerHTML = appState.tasks.map(task => {
+    const taskId = task._uiId || String(task.id);
+    const isPending = editSession.tasks.has(taskId);
+    const classes = ['task-item', task.priority];
+    if (isPending) classes.push('pending-delete');
+    return `
+      <div class="${classes.join(' ')}">
+        <button type="button" class="item-delete-btn" data-type="task" data-id="${taskId}" aria-label="Eliminar tarea" ${isPending ? 'disabled aria-hidden="true"' : ''}>X</button>
+        <div class="task-title">${task.title}</div>
+        <div class="task-assignee">👤 Asignado: <strong>${task.assignedTo}</strong></div>
+        <div class="task-contact">📞 Supervisor: ${task.supervisor} - <a href="tel:${task.phone}">${task.phone}</a></div>
+      </div>
+    `;
+  }).join('');
 }
 
 // Initialize Voice Control
@@ -741,96 +796,283 @@ function renderErrorBanner() {
   }
 }
 
-function initEditModeControls() {
-  const editToggle = document.getElementById('edit-mode-toggle');
-  if (!editToggle) return;
+function initEditModeToggle() {
+  const toggleButton = document.getElementById('edit-mode-toggle');
+  if (!toggleButton) return;
 
-  const addInvoiceBtn = document.getElementById('add-invoice-btn');
-  const addTaskBtn = document.getElementById('add-task-btn');
-  const defaultLabel = editToggle.textContent.trim() || 'Editar';
-  const activeLabel = 'Cerrar edición';
+  editModeButton = toggleButton;
+  editModeButtonDefaultLabel = toggleButton.textContent.trim() || 'Editar';
+  toggleButton.dataset.defaultLabel = editModeButtonDefaultLabel;
 
-  const updateUI = () => {
-    document.body.classList.toggle('edit-mode-active', isEditMode);
-    editToggle.textContent = isEditMode ? activeLabel : defaultLabel;
-    editToggle.setAttribute('aria-pressed', String(isEditMode));
-  };
-
-  const toggleEditMode = () => {
-    isEditMode = !isEditMode;
-    updateUI();
-  };
-
-  editToggle.type = 'button';
-  editToggle.setAttribute('aria-pressed', 'false');
-  editToggle.addEventListener('click', toggleEditMode);
-  editToggle.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      toggleEditMode();
+  toggleButton.addEventListener('click', () => {
+    if (isEditMode) {
+      requestExitEditMode();
+    } else {
+      enterEditMode();
     }
   });
 
-  if (addInvoiceBtn) {
-    addInvoiceBtn.addEventListener('click', () => {
-      if (!isEditMode) return;
-      const newInvoice = promptNewInvoice();
-      if (newInvoice) {
-        appState.invoices = [newInvoice, ...appState.invoices];
-        renderInvoices();
-      }
-    });
-  }
-
-  if (addTaskBtn) {
-    addTaskBtn.addEventListener('click', () => {
-      if (!isEditMode) return;
-      const newTask = promptNewTask();
-      if (newTask) {
-        appState.tasks = [newTask, ...appState.tasks];
-        renderTasks();
-      }
-    });
-  }
-
-  updateUI();
+  updateEditModeButtonState();
+  document.body.classList.toggle('is-edit-mode', isEditMode);
 }
 
-function promptNewInvoice() {
-  const vendor = window.prompt('Proveedor de la factura:');
-  if (!vendor) return null;
-
-  const amountInput = window.prompt('Importe estimado (€):', '0');
-  if (amountInput === null) return null;
-  const amount = toNumber(amountInput);
-
-  const dueDate = window.prompt('Fecha de vencimiento (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
-  if (dueDate === null) return null;
-
-  return {
-    id: generateRecordId('INV'),
-    vendor,
-    amount,
-    dueDate,
-    status: 'pending'
-  };
+function initDeletionHandlers() {
+  if (deleteHandlersInitialized) return;
+  document.addEventListener('click', handleDeleteButtonClick);
+  deleteHandlersInitialized = true;
 }
 
-function promptNewTask() {
-  const title = window.prompt('Título de la tarea:');
-  if (!title) return null;
+function handleDeleteButtonClick(event) {
+  const deleteButton = event.target.closest('.item-delete-btn');
+  if (!deleteButton || !isEditMode) return;
 
-  const assignedTo = window.prompt('Responsable principal:') || 'Sin asignar';
-  const supervisor = window.prompt('Supervisor de la tarea:') || 'Sin supervisor';
-  const phone = window.prompt('Teléfono de contacto:', '+34 600 000 000') || '';
-  const priority = (window.prompt('Prioridad (high, medium, low):', 'medium') || 'medium').toLowerCase();
+  const targetType = deleteButton.dataset.type;
+  const targetId = deleteButton.dataset.id;
+  if (!targetType || !targetId) return;
 
-  return {
-    id: generateRecordId('TASK'),
-    title,
-    assignedTo,
-    supervisor,
-    phone,
-    priority: ['high', 'medium', 'low'].includes(priority) ? priority : 'medium'
+  if (isItemPendingDeletion(targetType, targetId)) {
+    return;
+  }
+
+  stageItemForDeletion(targetType, targetId);
+
+  deleteButton.blur();
+}
+
+function stageItemForDeletion(type, targetId) {
+  const collection = type === 'invoice' ? appState.invoices : appState.tasks;
+  const pendingMap = type === 'invoice' ? editSession.invoices : editSession.tasks;
+  if (!Array.isArray(collection)) return;
+  const target = collection.find(item => (item._uiId || String(item.id)) === targetId);
+  if (!target) return;
+  pendingMap.set(targetId, { ...target });
+  if (type === 'invoice') {
+    renderInvoices();
+  } else {
+    renderTasks();
+  }
+}
+
+function isItemPendingDeletion(type, targetId) {
+  const pendingMap = type === 'invoice' ? editSession.invoices : editSession.tasks;
+  return pendingMap.has(targetId);
+}
+
+function hasPendingChanges() {
+  return editSession.invoices.size > 0 || editSession.tasks.size > 0;
+}
+
+function createEditSnapshot() {
+  editSession.snapshot = {
+    invoices: deepClone(appState.invoices),
+    tasks: deepClone(appState.tasks)
   };
+  editSession.invoices.clear();
+  editSession.tasks.clear();
+}
+
+function restoreSnapshotFromEditSession() {
+  if (!editSession.snapshot) return;
+  appState.invoices = deepClone(editSession.snapshot.invoices || []);
+  appState.tasks = deepClone(editSession.snapshot.tasks || []);
+}
+
+function clearEditSession() {
+  editSession.snapshot = null;
+  editSession.invoices.clear();
+  editSession.tasks.clear();
+}
+
+function deepClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function enterEditMode() {
+  if (isEditMode) return;
+  createEditSnapshot();
+  isEditMode = true;
+  document.body.classList.add('is-edit-mode');
+  updateEditModeButtonState();
+}
+
+function requestExitEditMode() {
+  if (!isEditMode) return;
+  if (hasPendingChanges()) {
+    openConfirmModal();
+    return;
+  }
+  finalizeExitEditMode();
+}
+
+function finalizeExitEditMode({ restoreSnapshot = false } = {}) {
+  if (!isEditMode) return;
+  if (restoreSnapshot) {
+    restoreSnapshotFromEditSession();
+  }
+  clearEditSession();
+  isEditMode = false;
+  document.body.classList.remove('is-edit-mode');
+  updateEditModeButtonState();
+  renderInvoices();
+  renderTasks();
+}
+
+function updateEditModeButtonState() {
+  if (!editModeButton) return;
+  const label = isEditMode ? 'Listo' : (editModeButtonDefaultLabel || 'Editar');
+  editModeButton.textContent = label;
+  editModeButton.setAttribute('aria-pressed', String(isEditMode));
+  editModeButton.setAttribute('aria-label', isEditMode ? 'Desactivar modo edición' : 'Activar modo edición');
+  editModeButton.title = isEditMode ? 'Salir del modo edición' : 'Activar modo edición';
+  editModeButton.classList.toggle('active', isEditMode);
+}
+
+function initConfirmModal() {
+  const root = document.getElementById('edit-confirm-modal');
+  if (!root) return;
+  confirmModalElements.root = root;
+  confirmModalElements.summary = document.getElementById('edit-confirm-summary');
+  confirmModalElements.invoicesSection = document.getElementById('modal-invoices-section');
+  confirmModalElements.invoicesList = document.getElementById('modal-invoices-list');
+  confirmModalElements.tasksSection = document.getElementById('modal-tasks-section');
+  confirmModalElements.tasksList = document.getElementById('modal-tasks-list');
+  confirmModalElements.cancelBtn = document.getElementById('modal-cancel-btn');
+  confirmModalElements.confirmBtn = document.getElementById('modal-confirm-btn');
+
+  confirmModalElements.cancelBtn?.addEventListener('click', handleModalCancel);
+  confirmModalElements.confirmBtn?.addEventListener('click', handleModalConfirm);
+  root.addEventListener('click', (event) => {
+    if (event.target.dataset.modalClose === 'true' && !isApplyingPendingChanges) {
+      handleModalCancel();
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && confirmModalElements.root?.classList.contains('is-open') && !isApplyingPendingChanges) {
+      handleModalCancel();
+    }
+  });
+}
+
+function openConfirmModal() {
+  if (!confirmModalElements.root) return;
+  populateModalLists();
+  confirmModalElements.root.classList.add('is-open');
+  confirmModalElements.root.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  setModalLoadingState(false);
+  confirmModalElements.confirmBtn?.focus();
+}
+
+function closeConfirmModal() {
+  if (!confirmModalElements.root) return;
+  confirmModalElements.root.classList.remove('is-open');
+  confirmModalElements.root.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+}
+
+function populateModalLists() {
+  if (!confirmModalElements.summary) return;
+  const pendingInvoices = Array.from(editSession.invoices.values());
+  const pendingTasks = Array.from(editSession.tasks.values());
+  const total = pendingInvoices.length + pendingTasks.length;
+  confirmModalElements.summary.textContent = total === 1
+    ? 'Se detectó 1 cambio pendiente.'
+    : `Se detectaron ${total} cambios pendientes.`;
+
+  if (confirmModalElements.invoicesSection) {
+    confirmModalElements.invoicesSection.hidden = pendingInvoices.length === 0;
+  }
+  if (confirmModalElements.tasksSection) {
+    confirmModalElements.tasksSection.hidden = pendingTasks.length === 0;
+  }
+
+  if (confirmModalElements.invoicesList) {
+    confirmModalElements.invoicesList.innerHTML = pendingInvoices.map(invoice => `
+      <li>
+        <span>${invoice.id || invoice.invoiceNumber || 'Factura'}</span>
+        <small>${invoice.vendor || invoice.supplierName || ''}</small>
+      </li>
+    `).join('');
+  }
+
+  if (confirmModalElements.tasksList) {
+    confirmModalElements.tasksList.innerHTML = pendingTasks.map(task => `
+      <li>
+        <span>${task.title}</span>
+        <small>${task.assignedTo || 'Sin asignar'}</small>
+      </li>
+    `).join('');
+  }
+}
+
+function handleModalCancel() {
+  closeConfirmModal();
+  finalizeExitEditMode({ restoreSnapshot: true });
+}
+
+async function handleModalConfirm() {
+  if (isApplyingPendingChanges) return;
+  try {
+    isApplyingPendingChanges = true;
+    setModalLoadingState(true);
+    await applyPendingChangesToServer();
+    removePendingItemsFromState();
+    closeConfirmModal();
+    finalizeExitEditMode();
+    appState.errorMessage = '';
+    renderErrorBanner();
+  } catch (error) {
+    console.error('Error applying pending changes:', error);
+    appState.errorMessage = 'No se pudieron aplicar los cambios. Intenta nuevamente.';
+    renderErrorBanner();
+  } finally {
+    isApplyingPendingChanges = false;
+    setModalLoadingState(false);
+  }
+}
+
+async function applyPendingChangesToServer() {
+  const invoiceRequests = Array.from(editSession.invoices.values())
+    .filter(invoice => invoice.id && invoice.id !== 'N/A')
+    .map(invoice => deleteInvoiceById(invoice.id));
+  const taskRequests = Array.from(editSession.tasks.values())
+    .filter(task => task.id)
+    .map(task => deleteTaskById(task.id));
+
+  await Promise.all([...invoiceRequests, ...taskRequests]);
+}
+
+async function deleteInvoiceById(invoiceId) {
+  const response = await fetch(`/api/invoices/${invoiceId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error('Error al eliminar la factura');
+  }
+}
+
+async function deleteTaskById(taskId) {
+  const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error('Error al eliminar la tarea');
+  }
+}
+
+function removePendingItemsFromState() {
+  if (editSession.invoices.size) {
+    const invoiceIds = new Set(editSession.invoices.keys());
+    appState.invoices = appState.invoices.filter(invoice => !invoiceIds.has(invoice._uiId || String(invoice.id)));
+  }
+  if (editSession.tasks.size) {
+    const taskIds = new Set(editSession.tasks.keys());
+    appState.tasks = appState.tasks.filter(task => !taskIds.has(task._uiId || String(task.id)));
+  }
+  renderInvoices();
+  renderTasks();
+  updateKPIs();
+}
+
+function setModalLoadingState(isLoading) {
+  if (!confirmModalElements.confirmBtn || !confirmModalElements.cancelBtn) return;
+  confirmModalElements.confirmBtn.disabled = isLoading;
+  confirmModalElements.cancelBtn.disabled = isLoading;
+  confirmModalElements.confirmBtn.textContent = isLoading ? 'Aplicando...' : 'Aplicar cambios';
 }

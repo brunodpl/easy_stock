@@ -107,34 +107,49 @@ app.get('/api/invoices', async (req, res) => {
   }
 });
 
-// ✅ GET: Tareas (estático por ahora)
-app.get('/api/tasks', (req, res) => {
-  res.json([
-    {
-      id: 1,
-      title: 'Revisar stock crítico',
-      priority: 'high',
-      assignedTo: 'Juan Pérez',
-      supervisor: 'María García',
-      phone: '+34 600 123 456'
-    },
-    {
-      id: 2,
-      title: 'Reorganizar almacén zona B',
-      priority: 'medium',
-      assignedTo: 'Ana López',
-      supervisor: 'Carlos Ruiz',
-      phone: '+34 600 789 012'
-    },
-    {
-      id: 3,
-      title: 'Actualizar inventario mensual',
-      priority: 'high',
-      assignedTo: 'Pedro Sánchez',
-      supervisor: 'Laura Martín',
-      phone: '+34 600 345 678'
+// ✅ GET: Tareas
+app.get('/api/tasks', async (req, res) => {
+  try {
+    const tasks = await prisma.task.findMany({
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(tasks);
+  } catch (error) {
+    console.error('Error fetching tasks:', error);
+    res.status(500).json({ error: 'Error fetching tasks' });
+  }
+});
+
+// 🧾 DELETE: Factura
+app.delete('/api/invoices/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await prisma.invoice.delete({ where: { id } });
+    res.status(204).end();
+  } catch (error) {
+    console.error('Error deleting invoice:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Invoice not found' });
+    } else {
+      res.status(500).json({ error: 'Error deleting invoice' });
     }
-  ]);
+  }
+});
+
+// ✅ DELETE: Tarea
+app.delete('/api/tasks/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await prisma.task.delete({ where: { id } });
+    res.status(204).end();
+  } catch (error) {
+    console.error('Error deleting task:', error);
+    if (error.code === 'P2025') {
+      res.status(404).json({ error: 'Task not found' });
+    } else {
+      res.status(500).json({ error: 'Error deleting task' });
+    }
+  }
 });
 
 // 📋 POST: Crear producto

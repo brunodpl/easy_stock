@@ -141,3 +141,21 @@ model Invoice {
   @@index([status], map: "idx_invoices_status")
   @@map("invoices")
 }
+
+model Task {
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  title      String    @db.VarChar(255)
+  priority   String?   @default("medium") @db.VarChar(20)
+  assignedTo String?   @map("assigned_to") @db.VarChar(255)
+  supervisor String?   @db.VarChar(255)
+  phone      String?   @db.VarChar(50)
+  status     String?   @default("pending") @db.VarChar(20)
+  dueDate    DateTime? @map("due_date") @db.Date
+  notes      String?
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@index([priority], map: "idx_tasks_priority")
+  @@index([status], map: "idx_tasks_status")
+  @@map("tasks")
+}

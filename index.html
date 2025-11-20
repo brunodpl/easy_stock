@@ -139,23 +139,42 @@
                     <!-- Invoices -->
                     <section class="card invoices">
                         <h2>💳 Facturas Próximas</h2>
-                        <div class="section-actions" data-section="invoices">
-                            <button type="button" id="add-invoice-btn" class="action-btn">➕ Nueva factura</button>
-                        </div>
                         <div id="invoices-list" class="invoices-list"></div>
                     </section>
 
                     <!-- Tasks -->
                     <section class="card tasks">
                         <h2>✅ Tareas Prioritarias</h2>
-                        <div class="section-actions" data-section="tasks">
-                            <button type="button" id="add-task-btn" class="action-btn">➕ Nueva tarea</button>
-                        </div>
                         <div id="tasks-list" class="tasks-list"></div>
                     </section>
                 </div>
             </div>
         </main>
+
+        <!-- Confirm Changes Modal -->
+        <div id="edit-confirm-modal" class="edit-confirm-modal" aria-hidden="true">
+            <div class="edit-confirm-modal__backdrop" data-modal-close="true"></div>
+            <div class="edit-confirm-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="edit-confirm-title">
+                <div class="edit-confirm-modal__header">
+                    <h3 id="edit-confirm-title">Confirmar cambios</h3>
+                    <p id="edit-confirm-summary">Tienes cambios pendientes de aplicar.</p>
+                </div>
+                <div class="edit-confirm-modal__body">
+                    <div id="modal-invoices-section" class="modal-section" hidden>
+                        <h4>Facturas a eliminar</h4>
+                        <ul id="modal-invoices-list" class="modal-list"></ul>
+                    </div>
+                    <div id="modal-tasks-section" class="modal-section" hidden>
+                        <h4>Tareas a eliminar</h4>
+                        <ul id="modal-tasks-list" class="modal-list"></ul>
+                    </div>
+                </div>
+                <div class="edit-confirm-modal__footer">
+                    <button id="modal-cancel-btn" class="modal-btn modal-btn--secondary">Cancelar</button>
+                    <button id="modal-confirm-btn" class="modal-btn modal-btn--primary">Aplicar cambios</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Voice Control Button -->
         <button id="voice-btn" class="voice-btn" aria-label="Control por voz" title="Activar control por voz">

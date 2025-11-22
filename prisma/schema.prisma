@@ -1,16 +1,18 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  extensions = [uuidOssp(map: "uuid-ossp")]
 }
 
 model WarehouseConfig {
   id                Int       @id @unique(map: "idx_warehouse_config_singleton") @default(1)
   warehouseName     String?   @default("Mi Almacén") @map("warehouse_name") @db.VarChar(255)
-  totalCapacity     Int?      @default(18) @map("total_capacity")
+  totalCapacity     Int?      @default(1000) @map("total_capacity")
   unitsOfMeasure    String?   @default("m2") @map("units_of_measure") @db.VarChar(50)
   totalZones        Int?      @default(2) @map("total_zones")
   expiryWarningDays Int?      @default(7) @map("expiry_warning_days")
@@ -51,6 +53,7 @@ model Product {
   currency       String?         @default("EUR") @db.VarChar(3)
   location       String?         @db.VarChar(100)
   zone           String?         @db.VarChar(50)
+  numberOfUnits  String?         @map("number_of_units") @db.VarChar(100)
   expirationDate DateTime?       @map("expiration_date") @db.Date
   supplier       String?         @db.VarChar(255)
   deletedAt      DateTime?       @map("deleted_at") @db.Timestamp(6)
@@ -132,6 +135,7 @@ model Invoice {
   paymentReference String?   @map("payment_reference") @db.VarChar(100)
   filePath         String?   @map("file_path")
   notes            String?
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamp(6)
   createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt        DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
 
@@ -139,6 +143,7 @@ model Invoice {
   @@index([supplierName], map: "idx_invoices_supplier")
   @@index([limitDate], map: "idx_invoices_due_date")
   @@index([status], map: "idx_invoices_status")
+  @@index([deletedAt], map: "idx_invoices_deleted")
   @@map("invoices")
 }
 

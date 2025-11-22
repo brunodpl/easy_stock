@@ -24,6 +24,7 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- ===== Easy Stock Dashboard Layout ===== -->
     <div id="app">
         <!-- Error Banner -->
         <div id="app-error-banner" style="display:none;padding:12px 16px;margin-bottom:12px;border-radius:8px;background:#fee2e2;color:#991b1b;font-weight:600;border:1px solid #fecaca;"></div>
@@ -69,13 +70,6 @@
                         <div class="kpi-value" id="kpi-alerts">0</div>
                     </div>
                 </div>
-                <div class="kpi-card" style="background-color: var(--color-bg-4);">
-                    <div class="kpi-icon">📈</div>
-                    <div class="kpi-content">
-                        <div class="kpi-label">Excesos Stock</div>
-                        <div class="kpi-value" id="kpi-excess">0</div>
-                    </div>
-                </div>
             </section>
 
             <!-- Two Column Layout -->
@@ -90,7 +84,10 @@
 
                     <!-- Products Table -->
                     <section class="card products-table">
-                        <h2>📦 Inventario de Productos</h2>
+                        <div class="products-table-header">
+                            <h2>📦 Inventario de Productos</h2>
+                            <p id="products-price-total" class="products-price-total">SUM(precio): €0.00</p>
+                        </div>
                         <div class="table-container">
                             <table id="products-table">
                                 <thead>
@@ -98,7 +95,7 @@
                                         <th>SKU</th>
                                         <th>Producto</th>
                                         <th>Stock</th>
-                                        <th>Ubicación</th>
+                                        <th>Zona</th>
                                         <th>Caducidad</th>
                                         <th>Precio</th>
                                     </tr>
@@ -128,11 +125,11 @@
                         <h2>📊 Ocupación por Zona</h2>
                         <div class="space-bar">
                             <div class="space-bar-fill" id="space-bar-fill" style="width: 0%;"></div>
-                            <div class="space-bar-label" id="space-bar-label">0 / 1000 unidades</div>
+                            <div class="space-bar-label" id="space-bar-label">0 / 1000 m³</div>
                         </div>
                         <div class="space-info">
-                            <span>Capacidad total: <strong id="capacity-total">1000</strong></span>
-                            <span>Disponible: <strong id="capacity-available">1000</strong></span>
+                            <span>Capacidad total: <strong id="capacity-total">1000 m³</strong></span>
+                            <span>Disponible: <strong id="capacity-available">1000 m³</strong></span>
                         </div>
                     </section>
 
@@ -160,6 +157,10 @@
                     <p id="edit-confirm-summary">Tienes cambios pendientes de aplicar.</p>
                 </div>
                 <div class="edit-confirm-modal__body">
+                    <div id="modal-products-section" class="modal-section" hidden>
+                        <h4>Cambios en productos</h4>
+                        <ul id="modal-products-list" class="modal-list"></ul>
+                    </div>
                     <div id="modal-invoices-section" class="modal-section" hidden>
                         <h4>Facturas a eliminar</h4>
                         <ul id="modal-invoices-list" class="modal-list"></ul>
@@ -173,6 +174,55 @@
                     <button id="modal-cancel-btn" class="modal-btn modal-btn--secondary">Cancelar</button>
                     <button id="modal-confirm-btn" class="modal-btn modal-btn--primary">Aplicar cambios</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Product Editor Modal -->
+        <div id="product-editor-modal" class="product-editor-modal" aria-hidden="true">
+            <div class="product-editor-modal__backdrop" data-product-editor-close="true"></div>
+            <div class="product-editor-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="product-editor-title">
+                <form id="product-editor-form">
+                    <div class="product-editor-modal__header">
+                        <h3 id="product-editor-title">Editar producto</h3>
+                        <p>Actualiza los datos y confirma los cambios desde el panel principal.</p>
+                    </div>
+                    <div class="product-editor-modal__body">
+                        <div id="product-editor-errors" class="product-editor-errors" hidden></div>
+                        <div class="product-editor-grid">
+                            <label class="product-editor-field">
+                                <span>Nombre *</span>
+                                <input type="text" name="nombre" required>
+                            </label>
+                            <label class="product-editor-field">
+                                <span>SKU *</span>
+                                <input type="text" name="sku" required>
+                            </label>
+                            <label class="product-editor-field">
+                                <span>Stock actual *</span>
+                                <input type="number" name="stock_actual" min="0" required>
+                            </label>
+                            <label class="product-editor-field">
+                                <span>Zona</span>
+                                <input type="text" name="zona">
+                            </label>
+                            <label class="product-editor-field">
+                                <span>Caducidad</span>
+                                <input type="date" name="caducidad">
+                            </label>
+                            <label class="product-editor-field">
+                                <span>Precio unitario *</span>
+                                <input type="number" name="precio_unitario" min="0" step="0.01" required>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="product-editor-modal__footer">
+                        <button type="button" id="product-editor-delete-btn" class="modal-btn modal-btn--danger">Eliminar</button>
+                        <div class="product-editor-actions">
+                            <button type="button" id="product-editor-cancel-btn" class="modal-btn modal-btn--secondary">Cancelar</button>
+                            <button type="submit" id="product-editor-save-btn" class="modal-btn modal-btn--primary">Guardar</button>
+                        </div>
+                    </div>
+                </form>
             </div>
         </div>
 

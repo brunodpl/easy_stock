@@ -1,3 +1,4 @@
+/* ===== Easy Stock Dashboard Styles ===== */
 :root {
   /* Primitive Color Tokens */
   --color-white: rgba(255, 255, 255, 1);
@@ -705,6 +706,17 @@ pre code {
   box-shadow: 0 10px 25px rgba(var(--color-error-rgb), 0.35);
 }
 
+.modal-btn--danger {
+  background: linear-gradient(135deg, rgba(185, 28, 28, 0.9), #991b1b);
+  color: var(--color-white);
+  box-shadow: 0 12px 30px rgba(185, 28, 28, 0.45);
+}
+
+.modal-btn--danger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 15px 35px rgba(185, 28, 28, 0.35);
+}
+
 .modal-btn:disabled {
   opacity: 0.6;
   cursor: wait;
@@ -712,6 +724,130 @@ pre code {
 
 body.modal-open {
   overflow: hidden;
+}
+
+.product-edit-btn {
+  padding: var(--space-6) var(--space-12);
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.16));
+  color: #1d4ed8;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.product-edit-btn:hover,
+.product-edit-btn:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(59, 130, 246, 0.25);
+}
+
+.product-editor-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2100;
+}
+
+.product-editor-modal.is-open {
+  display: flex;
+}
+
+.product-editor-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+}
+
+.product-editor-modal__dialog {
+  position: relative;
+  width: min(720px, 94vw);
+  max-height: 92vh;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-24);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(var(--color-gray-400-rgb), 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+  overflow: hidden;
+}
+
+.product-editor-modal__body {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: var(--space-8);
+}
+
+.product-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-16);
+}
+
+.product-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  font-size: var(--font-size-sm);
+}
+
+.product-editor-field span {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.product-editor-field input {
+  border-radius: var(--radius-base);
+  border: 1px solid rgba(var(--color-gray-400-rgb), 0.6);
+  padding: var(--space-10) var(--space-12);
+  background: rgba(var(--color-surface-rgb), 0.8);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  transition: border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.product-editor-field input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+.product-editor-errors {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #dc2626;
+  border-radius: var(--radius-base);
+  padding: var(--space-12);
+  font-size: var(--font-size-sm);
+}
+
+.product-editor-errors ul {
+  margin: 0;
+  padding-left: var(--space-16);
+}
+
+.product-editor-modal__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-12);
+  flex-wrap: wrap;
+}
+
+.product-editor-actions {
+  display: flex;
+  gap: var(--space-12);
 }
 
 
@@ -1057,6 +1193,20 @@ body.modal-open {
   margin-right: var(--space-8);
   border-radius: 2px;
   box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+.products-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  flex-wrap: wrap;
+}
+
+.products-price-total {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-accent);
 }
 
 .table-container {

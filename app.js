@@ -131,7 +131,7 @@
   }
 }; */
 
-// Application State
+// ===== Global State & Session Tracking =====
 let appState = {
   products: [],
   invoices: [],
@@ -149,7 +149,8 @@ let editModeButtonDefaultLabel = 'Editar';
 const editSession = {
   snapshot: null,
   invoices: new Map(),
-  tasks: new Map()
+  tasks: new Map(),
+  products: new Map()
 };
 const confirmModalElements = {
   root: null,
@@ -158,10 +159,92 @@ const confirmModalElements = {
   invoicesList: null,
   tasksSection: null,
   tasksList: null,
+  productsSection: null,
+  productsList: null,
   cancelBtn: null,
   confirmBtn: null
 };
+const productEditorState = {
+  modal: null,
+  form: null,
+  errors: null,
+  deleteBtn: null,
+  cancelBtn: null,
+  saveBtn: null,
+  productId: null,
+  originalProduct: null,
+  initialized: false
+};
+let productEditHandlersInitialized = false;
 let isApplyingPendingChanges = false;
+let offlineBannerMessage = '';
+const STORAGE_KEYS = {
+  cache: 'easy_stock_cache_v1',
+  queue: 'easy_stock_queue_v1'
+};
+let pendingSyncQueue = loadPendingQueueFromStorage();
+let isOfflineMode = !navigator.onLine;
+
+function getProductById(productId) {
+  if (!productId) return null;
+  const targetId = String(productId);
+  return appState.products.find(product => String(product.id) === targetId) || null;
+}
+
+function loadPendingQueueFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.queue);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.warn('No se pudo cargar la cola offline:', error);
+    return [];
+  }
+}
+
+function persistPendingQueue() {
+  try {
+    localStorage.setItem(STORAGE_KEYS.queue, JSON.stringify(pendingSyncQueue));
+  } catch (error) {
+    console.warn('No se pudo guardar la cola offline:', error);
+  }
+}
+
+function persistAppStateSnapshot() {
+  try {
+    const snapshot = {
+      products: appState.products,
+      invoices: appState.invoices,
+      tasks: appState.tasks,
+      alerts: appState.alerts,
+      kpis: appState.kpis,
+      warehouseConfig: appState.warehouseConfig
+    };
+    localStorage.setItem(STORAGE_KEYS.cache, JSON.stringify(snapshot));
+  } catch (error) {
+    console.warn('No se pudo guardar la caché local:', error);
+  }
+}
+
+function loadAppStateFromCache() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.cache);
+    if (!raw) return false;
+    const snapshot = JSON.parse(raw);
+    if (!snapshot || typeof snapshot !== 'object') return false;
+    appState.products = Array.isArray(snapshot.products) ? snapshot.products : [];
+    appState.invoices = Array.isArray(snapshot.invoices) ? snapshot.invoices : [];
+    appState.tasks = Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
+    appState.alerts = Array.isArray(snapshot.alerts) ? snapshot.alerts : [];
+    appState.kpis = snapshot.kpis || null;
+    appState.warehouseConfig = snapshot.warehouseConfig || appState.warehouseConfig;
+    return true;
+  } catch (error) {
+    console.warn('No se pudo restaurar la caché local:', error);
+    return false;
+  }
+}
 
 // Normalizers to adapt API responses to the UI data model
 function normalizeProduct(product) {
@@ -175,7 +258,10 @@ function normalizeProduct(product) {
     caducidad: formatDate(product.caducidad || product.expirationDate),
     ubicacion: product.ubicacion || product.location || 'Sin ubicación',
     stockMin: product.stockMin ?? product.minStock ?? 0,
-    stockMax: product.stockMax ?? product.maxStock ?? 0
+    stockMax: product.stockMax ?? product.maxStock ?? 0,
+    zona: product.zona || product.zone || '',
+    proveedor: product.proveedor || product.supplier || '',
+    codigo: product.codigo || product.barcode || ''
   };
 }
 
@@ -197,12 +283,13 @@ function normalizeAlert(alert) {
 }
 
 function normalizeInvoice(invoice) {
+  const status = (invoice.status || 'PENDING').toString().toUpperCase();
   return {
     id: invoice.id || invoice.invoiceNumber || 'N/A',
     vendor: invoice.vendor || invoice.supplierName || 'Proveedor desconocido',
     amount: toNumber(invoice.amount ?? invoice.totalAmount ?? 0),
     dueDate: invoice.dueDate || invoice.limitDate,
-    status: invoice.status || 'pending'
+    status
   };
 }
 
@@ -274,13 +361,15 @@ async function init() {
   initVoiceControl();
   initEditModeToggle();
   initDeletionHandlers();
+  initProductRowEditing();
+  initProductEditor();
   initConfirmModal();
+  initConnectivityListeners();
   
   console.log('Dashboard initialized successfully!');
 }
 
-// app.js - Reemplazar función loadData()
-
+// ===== Initial Data Fetch & Bootstrapping =====
 async function loadData() {
   try {
     const [productsRes, alertsRes, invoicesRes, kpisRes, tasksRes] = await Promise.all([
@@ -331,8 +420,16 @@ async function loadData() {
 
     console.log('✅ Datos cargados desde base de datos');
     appState.errorMessage = '';
+    persistAppStateSnapshot();
   } catch (error) {
     console.error('❌ Error cargando datos:', error);
+    const loadedFromCache = loadAppStateFromCache();
+    if (loadedFromCache) {
+      isOfflineMode = true;
+      appState.errorMessage = '';
+      setOfflineBanner('Modo offline: mostrando datos almacenados.');
+      return;
+    }
     appState.errorMessage = 'No se pudo cargar la información del servidor. Intenta más tarde.';
     // Fallback a datos de muestra si falla la API
     if (typeof sampleData !== 'undefined') {
@@ -348,6 +445,136 @@ async function loadData() {
     }
     throw error;
   }
+}
+
+function initConnectivityListeners() {
+  window.addEventListener('online', handleConnectionRestored);
+  window.addEventListener('offline', handleConnectionLost);
+  if (isOfflineMode) {
+    setOfflineBanner('Modo offline: tus cambios se guardarán localmente.');
+  }
+  if (pendingSyncQueue.length && navigator.onLine) {
+    flushPendingQueue();
+  }
+}
+
+function handleConnectionLost() {
+  isOfflineMode = true;
+  setOfflineBanner('Sin conexión. Puedes seguir trabajando y sincronizaremos al volver.');
+}
+
+function handleConnectionRestored() {
+  isOfflineMode = false;
+  flushPendingQueue();
+}
+
+function setOfflineBanner(message = '') {
+  offlineBannerMessage = message;
+  renderErrorBanner();
+}
+
+async function flushPendingQueue() {
+  if (!pendingSyncQueue.length || !navigator.onLine) {
+    if (!pendingSyncQueue.length) {
+      setOfflineBanner('');
+    }
+    return;
+  }
+
+  setOfflineBanner('Sincronizando cambios pendientes...');
+
+  while (pendingSyncQueue.length && navigator.onLine) {
+    const entry = pendingSyncQueue[0];
+    try {
+      await processQueuedEntry(entry);
+      pendingSyncQueue.shift();
+      persistPendingQueue();
+    } catch (error) {
+      console.error('No se pudo sincronizar la cola offline:', error);
+      setOfflineBanner('No se pudo sincronizar. Reintentaremos cuando haya conexión estable.');
+      return;
+    }
+  }
+
+  try {
+    await loadData();
+    refreshInventoryWidgets({ includeLists: true });
+    setOfflineBanner('');
+  } catch (error) {
+    console.error('Error refrescando datos tras sincronizar:', error);
+    setOfflineBanner('Datos sincronizados, pero no pudimos refrescar el tablero. Actualiza manualmente.');
+  }
+}
+
+async function processQueuedEntry(entry) {
+  const invoiceRequests = (entry.invoices || []).map(invoiceId => deleteInvoiceById(invoiceId));
+  const taskRequests = (entry.tasks || []).map(taskId => deleteTaskById(taskId));
+  const productResults = { updated: [], deleted: [] };
+  const productRequests = [];
+
+  (entry.products || []).forEach(({ productId, change }) => {
+    if (!productId || !change) return;
+    if (change.action === 'delete') {
+      productRequests.push(
+        deleteProductById(productId).then(() => {
+          productResults.deleted.push(productId);
+        })
+      );
+    } else if (change.action === 'update') {
+      productRequests.push(
+        applyProductUpdate(productId, change).then((product) => {
+          if (product) {
+            productResults.updated.push(product);
+          }
+        })
+      );
+    }
+  });
+
+  await Promise.all([...invoiceRequests, ...taskRequests, ...productRequests]);
+}
+
+function enqueuePendingChangesFromSession() {
+  const entry = {
+    id: `queue-${Date.now()}`,
+    timestamp: Date.now(),
+    invoices: Array.from(editSession.invoices.values())
+      .map(invoice => invoice.id)
+      .filter(Boolean),
+    tasks: Array.from(editSession.tasks.values())
+      .map(task => task.id)
+      .filter(Boolean),
+    products: Array.from(editSession.products.entries()).map(([productId, change]) => ({
+      productId,
+      change: deepClone(change)
+    }))
+  };
+
+  const hasChanges = entry.invoices.length || entry.tasks.length || entry.products.length;
+  if (!hasChanges) {
+    return;
+  }
+
+  pendingSyncQueue.push(entry);
+  persistPendingQueue();
+  setOfflineBanner('Cambios guardados offline. Se sincronizarán automáticamente.');
+}
+
+function buildLocalProductResultsFromEdits() {
+  const productResults = { updated: [], deleted: [] };
+  editSession.products.forEach((change, productId) => {
+    if (change.action === 'delete') {
+      productResults.deleted.push(productId);
+    }
+  });
+  return productResults;
+}
+
+function shouldEnqueueOffline(error) {
+  if (!error) return false;
+  if (!navigator.onLine) return true;
+  const message = error.message || '';
+  return message.includes('Failed to fetch') || message.includes('NetworkError');
 }
 
 
@@ -429,33 +656,28 @@ function updateCurrentDate() {
 
 // Update KPIs
 function updateKPIs() {
-  const kpis = appState.kpis;
-  // Total Products
-  const totalProducts = kpis?.totalProducts ?? appState.products.reduce((sum, p) => sum + p.stock_actual, 0);
+  const totalProducts = appState.products.reduce((sum, p) => sum + (Number(p.stock_actual) || 0), 0);
   const totalProductsElement = document.getElementById('kpi-total-products');
   if (totalProductsElement) {
     totalProductsElement.textContent = totalProducts.toLocaleString('es-ES');
   }
   
   // Total Value
-  const totalValue = kpis?.totalValue ?? appState.products.reduce((sum, p) => sum + (p.stock_actual * p.precio_unitario), 0);
+  const totalValue = appState.products.reduce((sum, p) => {
+    const stock = Number(p.stock_actual) || 0;
+    const price = Number(p.precio_unitario) || 0;
+    return sum + (stock * price);
+  }, 0);
   const totalValueElement = document.getElementById('kpi-total-value');
   if (totalValueElement) {
     totalValueElement.textContent = `€${totalValue.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
   
   // Active Alerts
-  const alertsCount = kpis?.alertsCount ?? appState.alerts.filter(a => a.priority === 'critical' || a.priority === 'warning').length;
+  const alertsCount = appState.alerts.filter(a => a.priority === 'critical' || a.priority === 'warning').length;
   const alertsElement = document.getElementById('kpi-alerts');
   if (alertsElement) {
     alertsElement.textContent = alertsCount;
-  }
-  
-  // Excess Stock
-  const excessCount = appState.products.filter(p => p.stock_actual >= p.stockMax).length;
-  const excessElement = document.getElementById('kpi-excess');
-  if (excessElement) {
-    excessElement.textContent = excessCount;
   }
 }
 
@@ -488,6 +710,11 @@ function renderProductsTable() {
   if (!tbody) return;
   
   tbody.innerHTML = appState.products.map(product => {
+    const pendingProduct = editSession.products.get(product.id);
+    const rowClasses = ['product-row'];
+    if (pendingProduct) {
+      rowClasses.push(pendingProduct.action === 'delete' ? 'pending-delete' : 'pending-edit');
+    }
     // Check stock status
     let stockClass = '';
     
@@ -510,18 +737,52 @@ function renderProductsTable() {
     const expirationSuffix = Number.isFinite(daysUntilExpiration) && daysUntilExpiration < 8
       ? ` (${daysUntilExpiration}d)`
       : '';
+    const actionButton = isEditMode
+      ? `<button type="button" class="product-edit-btn" data-product-id="${product.id}">Editar</button>`
+      : '';
     
     return `
-      <tr>
-        <td><strong>${product.sku}</strong></td>
+      <tr class="${rowClasses.join(' ')}" data-product-id="${product.id}">
+        <td>
+          <strong>${product.sku}</strong>
+          ${actionButton}
+        </td>
         <td>${product.nombre}</td>
         <td><span class="${stockClass}"><strong>${product.stock_actual}</strong> uds</span></td>
-        <td>${product.ubicacion}</td>
+        <td>${product.zona || product.ubicacion || 'Sin zona'}</td>
         <td><span class="${expirationClass}">${expirationLabel}${expirationSuffix}</span></td>
         <td>€${product.precio_unitario.toFixed(2)}</td>
       </tr>
     `;
   }).join('');
+
+  updateProductsPriceTotal();
+}
+
+function updateProductsPriceTotal() {
+  const totalElement = document.getElementById('products-price-total');
+  if (!totalElement) return;
+  const total = appState.products.reduce((sum, product) => {
+    const price = Number(product.precio_unitario);
+    return sum + (Number.isFinite(price) ? price : 0);
+  }, 0);
+  totalElement.textContent = `SUM(precio): €${total.toLocaleString('es-ES', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+
+// ===== Shared Re-render Helpers =====
+function refreshInventoryWidgets({ includeLists = false } = {}) {
+  renderProductsTable();
+  renderAlerts();
+  updateKPIs();
+  updateWarehouseGauge();
+  updateSpaceOccupancy();
+  if (includeLists) {
+    renderInvoices();
+    renderTasks();
+  }
 }
 
 // Calculate Warehouse Health Score
@@ -620,7 +881,7 @@ function updateWarehouseGauge() {
 
 // Update Space Occupancy
 function updateSpaceOccupancy() {
-  const totalStock = appState.products.reduce((sum, p) => sum + p.stock_actual, 0);
+  const totalStock = appState.products.reduce((sum, p) => sum + (Number(p.stock_actual) || 0), 0);
   const capacity = toNumber(appState.warehouseConfig.capacity) || 1000;
   const percentage = capacity > 0 ? Math.min((totalStock / capacity) * 100, 100) : 0;
   
@@ -634,15 +895,16 @@ function updateSpaceOccupancy() {
   }
   
   if (spaceBarLabel) {
-    spaceBarLabel.textContent = `${totalStock} / ${capacity} unidades`;
+    spaceBarLabel.textContent = `${totalStock} / ${capacity} m³`;
   }
   
   if (capacityTotal) {
-    capacityTotal.textContent = capacity.toLocaleString('es-ES');
+    capacityTotal.textContent = `${capacity.toLocaleString('es-ES')} m³`;
   }
   
   if (capacityAvailable) {
-    capacityAvailable.textContent = (capacity - totalStock).toLocaleString('es-ES');
+    const available = Math.max(capacity - totalStock, 0);
+    capacityAvailable.textContent = `${available.toLocaleString('es-ES')} m³`;
   }
 }
 
@@ -650,6 +912,11 @@ function updateSpaceOccupancy() {
 function renderInvoices() {
   const invoicesList = document.getElementById('invoices-list');
   if (!invoicesList) return;
+  const statusLabels = {
+    PENDING: 'Pendiente',
+    OVERDUE: 'Vencida',
+    PAID: 'Pagada'
+  };
   
   if (!appState.invoices || appState.invoices.length === 0) {
     invoicesList.innerHTML = '<p style="color: var(--color-text-secondary); text-align: center; padding: 20px;">No hay facturas próximas</p>';
@@ -665,6 +932,8 @@ function renderInvoices() {
       ? dueDate.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
       : 'Sin fecha definida';
     const invoiceId = invoice._uiId || String(invoice.id);
+    const statusLabel = statusLabels[invoice.status] || invoice.status || 'Pendiente';
+    const statusClass = (invoice.status || 'PENDING').toLowerCase();
     const isPending = editSession.invoices.has(invoiceId);
     const containerClasses = ['invoice-item'];
     if (isOverdue) containerClasses.push('overdue');
@@ -677,6 +946,7 @@ function renderInvoices() {
           <div class="invoice-id">${invoice.id}</div>
           <div class="invoice-amount">€${invoice.amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
+        <div class="invoice-status-badge ${statusClass}">${statusLabel}</div>
         <div class="invoice-vendor">${invoice.vendor}</div>
         <div class="invoice-due ${isOverdue ? 'overdue' : ''}">
           ${isOverdue ? '⚠️ Vencida: ' : 'Vencimiento: '} ${dueDateFormatted}
@@ -717,7 +987,7 @@ function initVoiceControl() {
   const voiceBtn = document.getElementById('voice-btn');
   
   if (!voiceBtn) return;
-  
+  // ===== Edit Mode Lifecycle =====
   // Check if speech recognition is supported
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   
@@ -787,8 +1057,9 @@ if (document.readyState === 'loading') {
 function renderErrorBanner() {
   const banner = document.getElementById('app-error-banner');
   if (!banner) return;
-  if (appState.errorMessage) {
-    banner.textContent = appState.errorMessage;
+  const message = appState.errorMessage || offlineBannerMessage;
+  if (message) {
+    banner.textContent = message;
     banner.style.display = 'block';
   } else {
     banner.textContent = '';
@@ -820,6 +1091,19 @@ function initDeletionHandlers() {
   if (deleteHandlersInitialized) return;
   document.addEventListener('click', handleDeleteButtonClick);
   deleteHandlersInitialized = true;
+}
+
+function initProductRowEditing() {
+  if (productEditHandlersInitialized) return;
+  document.addEventListener('click', (event) => {
+    const editBtn = event.target.closest('.product-edit-btn');
+    if (!editBtn) return;
+    if (!isEditMode) return;
+    const productId = editBtn.dataset.productId;
+    if (!productId) return;
+    openProductEditor(productId);
+  });
+  productEditHandlersInitialized = true;
 }
 
 function handleDeleteButtonClick(event) {
@@ -859,20 +1143,23 @@ function isItemPendingDeletion(type, targetId) {
 }
 
 function hasPendingChanges() {
-  return editSession.invoices.size > 0 || editSession.tasks.size > 0;
+  return editSession.invoices.size > 0 || editSession.tasks.size > 0 || editSession.products.size > 0;
 }
 
 function createEditSnapshot() {
   editSession.snapshot = {
+    products: deepClone(appState.products),
     invoices: deepClone(appState.invoices),
     tasks: deepClone(appState.tasks)
   };
   editSession.invoices.clear();
   editSession.tasks.clear();
+  editSession.products.clear();
 }
 
 function restoreSnapshotFromEditSession() {
   if (!editSession.snapshot) return;
+  appState.products = deepClone(editSession.snapshot.products || []);
   appState.invoices = deepClone(editSession.snapshot.invoices || []);
   appState.tasks = deepClone(editSession.snapshot.tasks || []);
 }
@@ -881,6 +1168,7 @@ function clearEditSession() {
   editSession.snapshot = null;
   editSession.invoices.clear();
   editSession.tasks.clear();
+  editSession.products.clear();
 }
 
 function deepClone(value) {
@@ -893,6 +1181,7 @@ function enterEditMode() {
   isEditMode = true;
   document.body.classList.add('is-edit-mode');
   updateEditModeButtonState();
+  renderProductsTable();
 }
 
 function requestExitEditMode() {
@@ -913,8 +1202,7 @@ function finalizeExitEditMode({ restoreSnapshot = false } = {}) {
   isEditMode = false;
   document.body.classList.remove('is-edit-mode');
   updateEditModeButtonState();
-  renderInvoices();
-  renderTasks();
+  refreshInventoryWidgets({ includeLists: true });
 }
 
 function updateEditModeButtonState() {
@@ -927,6 +1215,7 @@ function updateEditModeButtonState() {
   editModeButton.classList.toggle('active', isEditMode);
 }
 
+// ===== Confirm Modal Handling =====
 function initConfirmModal() {
   const root = document.getElementById('edit-confirm-modal');
   if (!root) return;
@@ -936,6 +1225,8 @@ function initConfirmModal() {
   confirmModalElements.invoicesList = document.getElementById('modal-invoices-list');
   confirmModalElements.tasksSection = document.getElementById('modal-tasks-section');
   confirmModalElements.tasksList = document.getElementById('modal-tasks-list');
+  confirmModalElements.productsSection = document.getElementById('modal-products-section');
+  confirmModalElements.productsList = document.getElementById('modal-products-list');
   confirmModalElements.cancelBtn = document.getElementById('modal-cancel-btn');
   confirmModalElements.confirmBtn = document.getElementById('modal-confirm-btn');
 
@@ -974,7 +1265,8 @@ function populateModalLists() {
   if (!confirmModalElements.summary) return;
   const pendingInvoices = Array.from(editSession.invoices.values());
   const pendingTasks = Array.from(editSession.tasks.values());
-  const total = pendingInvoices.length + pendingTasks.length;
+  const pendingProducts = Array.from(editSession.products.entries());
+  const total = pendingInvoices.length + pendingTasks.length + pendingProducts.length;
   confirmModalElements.summary.textContent = total === 1
     ? 'Se detectó 1 cambio pendiente.'
     : `Se detectaron ${total} cambios pendientes.`;
@@ -984,6 +1276,9 @@ function populateModalLists() {
   }
   if (confirmModalElements.tasksSection) {
     confirmModalElements.tasksSection.hidden = pendingTasks.length === 0;
+  }
+  if (confirmModalElements.productsSection) {
+    confirmModalElements.productsSection.hidden = pendingProducts.length === 0;
   }
 
   if (confirmModalElements.invoicesList) {
@@ -1003,6 +1298,18 @@ function populateModalLists() {
       </li>
     `).join('');
   }
+
+  if (confirmModalElements.productsList) {
+    confirmModalElements.productsList.innerHTML = pendingProducts.map(([productId, change]) => {
+      const label = change.action === 'delete' ? 'Eliminar' : 'Editar';
+      return `
+        <li data-product-id="${productId}">
+          <span>[${label}] ${change.sku || ''}</span>
+          <small>${change.nombre || 'Producto'}</small>
+        </li>
+      `;
+    }).join('');
+  }
 }
 
 function handleModalCancel() {
@@ -1015,8 +1322,8 @@ async function handleModalConfirm() {
   try {
     isApplyingPendingChanges = true;
     setModalLoadingState(true);
-    await applyPendingChangesToServer();
-    removePendingItemsFromState();
+    const productResults = await applyPendingChangesToServer();
+    removePendingItemsFromState(productResults);
     closeConfirmModal();
     finalizeExitEditMode();
     appState.errorMessage = '';
@@ -1031,17 +1338,57 @@ async function handleModalConfirm() {
   }
 }
 
+// ===== Pending Change Application =====
 async function applyPendingChangesToServer() {
-  const invoiceRequests = Array.from(editSession.invoices.values())
-    .filter(invoice => invoice.id && invoice.id !== 'N/A')
-    .map(invoice => deleteInvoiceById(invoice.id));
-  const taskRequests = Array.from(editSession.tasks.values())
-    .filter(task => task.id)
-    .map(task => deleteTaskById(task.id));
+  if (!navigator.onLine) {
+    const productResults = buildLocalProductResultsFromEdits();
+    enqueuePendingChangesFromSession();
+    return productResults;
+  }
 
-  await Promise.all([...invoiceRequests, ...taskRequests]);
+  try {
+    const invoiceRequests = Array.from(editSession.invoices.values())
+      .filter(invoice => invoice.id && invoice.id !== 'N/A')
+      .map(invoice => deleteInvoiceById(invoice.id));
+    const taskRequests = Array.from(editSession.tasks.values())
+      .filter(task => task.id)
+      .map(task => deleteTaskById(task.id));
+    const productResults = { updated: [], deleted: [] };
+    const productRequests = [];
+    editSession.products.forEach((change, productId) => {
+      if (change.action === 'delete') {
+        productRequests.push(
+          deleteProductById(productId).then(() => {
+            productResults.deleted.push(productId);
+          })
+        );
+        return;
+      }
+
+      if (change.action === 'update') {
+        productRequests.push(
+          applyProductUpdate(productId, change).then((product) => {
+            if (product) {
+              productResults.updated.push(product);
+            }
+          })
+        );
+      }
+    });
+
+    await Promise.all([...invoiceRequests, ...taskRequests, ...productRequests]);
+    return productResults;
+  } catch (error) {
+    if (shouldEnqueueOffline(error)) {
+      const productResults = buildLocalProductResultsFromEdits();
+      enqueuePendingChangesFromSession();
+      return productResults;
+    }
+    throw error;
+  }
 }
 
+// ===== API Helper Requests =====
 async function deleteInvoiceById(invoiceId) {
   const response = await fetch(`/api/invoices/${invoiceId}`, { method: 'DELETE' });
   if (!response.ok) {
@@ -1056,7 +1403,96 @@ async function deleteTaskById(taskId) {
   }
 }
 
-function removePendingItemsFromState() {
+async function updateProductDetails(productId, payload) {
+  const response = await fetch(`/api/products/${productId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    let message = 'Error al actualizar el producto';
+    try {
+      const error = await response.json();
+      if (error?.error) {
+        message = error.error;
+      }
+    } catch (err) {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+async function updateProductStock(productId, targetStock, baseStock = 0) {
+  const startingStock = Number.isFinite(Number(baseStock)) ? Number(baseStock) : 0;
+  const difference = Number(targetStock) - startingStock;
+  if (!Number.isFinite(difference) || difference === 0) {
+    return null;
+  }
+
+  const payload = {
+    cantidad: Math.abs(difference),
+    tipo: difference > 0 ? 'entrada' : 'salida',
+    motivo: 'Ajuste manual desde el panel'
+  };
+
+  const response = await fetch(`/api/products/${productId}/stock`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    let message = 'Error al actualizar el stock del producto';
+    try {
+      const error = await response.json();
+      if (error?.error) {
+        message = error.error;
+      }
+    } catch (err) {
+      // ignore
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+async function applyProductUpdate(productId, change) {
+  let latestProduct = null;
+
+  if (change.payload) {
+    latestProduct = await updateProductDetails(productId, change.payload);
+  }
+
+  if (typeof change.stockTarget === 'number') {
+    const stockResult = await updateProductStock(productId, change.stockTarget, change.baseStock);
+    if (stockResult) {
+      latestProduct = stockResult;
+    }
+  }
+
+  return latestProduct;
+}
+
+async function deleteProductById(productId) {
+  const response = await fetch(`/api/products/${productId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    let message = 'Error al eliminar el producto';
+    try {
+      const error = await response.json();
+      if (error?.error) {
+        message = error.error;
+      }
+    } catch (err) {
+      // ignore
+    }
+    throw new Error(message);
+  }
+}
+
+function removePendingItemsFromState(productResults = { updated: [], deleted: [] }) {
   if (editSession.invoices.size) {
     const invoiceIds = new Set(editSession.invoices.keys());
     appState.invoices = appState.invoices.filter(invoice => !invoiceIds.has(invoice._uiId || String(invoice.id)));
@@ -1065,9 +1501,16 @@ function removePendingItemsFromState() {
     const taskIds = new Set(editSession.tasks.keys());
     appState.tasks = appState.tasks.filter(task => !taskIds.has(task._uiId || String(task.id)));
   }
-  renderInvoices();
-  renderTasks();
-  updateKPIs();
+  if (productResults?.deleted?.length) {
+    const deletedSet = new Set(productResults.deleted);
+    appState.products = appState.products.filter(product => !deletedSet.has(product.id));
+  }
+  if (productResults?.updated?.length) {
+    const updatedMap = new Map(productResults.updated.map(product => [product.id, normalizeProduct(product)]));
+    appState.products = appState.products.map(product => updatedMap.get(product.id) || product);
+  }
+  refreshInventoryWidgets({ includeLists: true });
+  persistAppStateSnapshot();
 }
 
 function setModalLoadingState(isLoading) {
@@ -1075,4 +1518,295 @@ function setModalLoadingState(isLoading) {
   confirmModalElements.confirmBtn.disabled = isLoading;
   confirmModalElements.cancelBtn.disabled = isLoading;
   confirmModalElements.confirmBtn.textContent = isLoading ? 'Aplicando...' : 'Aplicar cambios';
+}
+
+// ===== Product Editor Modal =====
+function initProductEditor() {
+  if (productEditorState.initialized) return;
+  const modal = document.getElementById('product-editor-modal');
+  if (!modal) return;
+  productEditorState.modal = modal;
+  productEditorState.form = document.getElementById('product-editor-form');
+  productEditorState.errors = document.getElementById('product-editor-errors');
+  productEditorState.deleteBtn = document.getElementById('product-editor-delete-btn');
+  productEditorState.cancelBtn = document.getElementById('product-editor-cancel-btn');
+  productEditorState.saveBtn = document.getElementById('product-editor-save-btn');
+
+  productEditorState.form?.addEventListener('submit', handleProductFormSubmit);
+  productEditorState.cancelBtn?.addEventListener('click', closeProductEditor);
+  productEditorState.deleteBtn?.addEventListener('click', handleProductDeleteClick);
+  modal.addEventListener('click', (event) => {
+    if (event.target.dataset.productEditorClose === 'true') {
+      closeProductEditor();
+    }
+  });
+  productEditorState.initialized = true;
+}
+
+function openProductEditor(productId) {
+  if (!productEditorState.modal) return;
+  if (!isEditMode) return;
+  const product = getProductById(productId);
+  if (!product) return;
+  productEditorState.productId = productId;
+  productEditorState.originalProduct = { ...product };
+  populateProductEditorForm(product);
+  setProductEditorErrors();
+  productEditorState.modal.classList.add('is-open');
+  productEditorState.modal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  productEditorState.form?.elements?.nombre?.focus();
+}
+
+function closeProductEditor() {
+  if (!productEditorState.modal) return;
+  productEditorState.modal.classList.remove('is-open');
+  productEditorState.modal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+  productEditorState.productId = null;
+  productEditorState.originalProduct = null;
+  productEditorState.form?.reset();
+  setProductEditorErrors();
+}
+
+function populateProductEditorForm(product) {
+  if (!productEditorState.form) return;
+  const form = productEditorState.form;
+  if (form.nombre) {
+    form.nombre.value = product.nombre || '';
+  }
+  if (form.sku) {
+    form.sku.value = product.sku || '';
+  }
+  if (form.stock_actual) {
+    const stockValue = Number.isFinite(product.stock_actual) ? product.stock_actual : 0;
+    form.stock_actual.value = String(stockValue);
+  }
+  if (form.zona) {
+    form.zona.value = product.zona || '';
+  }
+  if (form.caducidad) {
+    form.caducidad.value = product.caducidad || '';
+  }
+  if (form.precio_unitario) {
+    form.precio_unitario.value = Number.isFinite(product.precio_unitario)
+      ? product.precio_unitario
+      : '';
+  }
+}
+
+function setProductEditorErrors(messages = []) {
+  if (!productEditorState.errors) return;
+  if (!messages.length) {
+    productEditorState.errors.innerHTML = '';
+    productEditorState.errors.hidden = true;
+    return;
+  }
+  productEditorState.errors.hidden = false;
+  productEditorState.errors.innerHTML = `
+    <ul>
+      ${messages.map(message => `<li>${message}</li>`).join('')}
+    </ul>
+  `;
+}
+
+function handleProductFormSubmit(event) {
+  event.preventDefault();
+  if (!productEditorState.form || !productEditorState.productId) return;
+  const product = getProductById(productEditorState.productId);
+  if (!product) return;
+  const values = collectProductFormValues(productEditorState.form);
+  const validation = validateProductForm(values, product);
+  if (validation.errors?.length) {
+    setProductEditorErrors(validation.errors);
+    return;
+  }
+  setProductEditorErrors();
+  stageProductUpdate(
+    productEditorState.productId,
+    validation.payload,
+    validation.preview,
+    validation.stockTarget
+  );
+  closeProductEditor();
+}
+
+function handleProductDeleteClick(event) {
+  event.preventDefault();
+  if (!productEditorState.productId) return;
+  const product = getProductById(productEditorState.productId);
+  if (!product) return;
+
+  editSession.products.set(productEditorState.productId, {
+    action: 'delete',
+    sku: product.sku,
+    nombre: product.nombre
+  });
+
+  setProductEditorErrors();
+  closeProductEditor();
+  renderProductsTable();
+}
+
+function collectProductFormValues(form) {
+  const data = new FormData(form);
+  return {
+    nombre: data.get('nombre')?.toString().trim() || '',
+    sku: data.get('sku')?.toString().trim() || '',
+    stock_actual: data.get('stock_actual')?.toString().trim() || '',
+    zona: data.get('zona')?.toString().trim() || '',
+    caducidad: data.get('caducidad')?.toString().trim() || '',
+    precio_unitario: data.get('precio_unitario')?.toString().trim() || ''
+  };
+}
+
+function validateProductForm(values, product) {
+  const errors = [];
+  const payload = {};
+  const preview = {};
+  let stockTarget = null;
+
+  const requiredStrings = [
+    ['nombre', 'name', 'Nombre'],
+    ['sku', 'sku', 'SKU']
+  ];
+
+  requiredStrings.forEach(([field, apiField, label]) => {
+    const value = values[field];
+    if (!value) {
+      errors.push(`${label} es obligatorio.`);
+      return;
+    }
+    if (value !== product[field]) {
+      payload[apiField] = value;
+      preview[field] = value;
+    }
+  });
+
+  const optionalStrings = [
+    ['zona', 'zone', 'zona']
+  ];
+
+  optionalStrings.forEach(([field, apiField, stateField]) => {
+    const value = values[field];
+    const baseValue = product[stateField] || '';
+    if (!value && !baseValue) {
+      return;
+    }
+    if (!value && baseValue) {
+      payload[apiField] = null;
+      preview[stateField] = '';
+      return;
+    }
+    if (value !== baseValue) {
+      payload[apiField] = value;
+      preview[stateField] = value;
+    }
+  });
+
+  const stockRaw = values.stock_actual;
+  if (stockRaw === '') {
+    errors.push('El stock actual es obligatorio.');
+  } else {
+    const parsedStock = Number(stockRaw);
+    if (!Number.isFinite(parsedStock) || parsedStock < 0) {
+      errors.push('El stock actual debe ser un número positivo.');
+    } else {
+      const normalizedStock = Math.floor(parsedStock);
+      if (normalizedStock !== product.stock_actual) {
+        preview.stock_actual = normalizedStock;
+        stockTarget = normalizedStock;
+      }
+    }
+  }
+
+  const expirationRaw = values.caducidad;
+  const productExpiration = product.caducidad || '';
+  if (!expirationRaw && productExpiration) {
+    payload.expirationDate = null;
+    preview.caducidad = '';
+  } else if (expirationRaw && expirationRaw !== productExpiration) {
+    const parsedExpiration = new Date(expirationRaw);
+    if (Number.isNaN(parsedExpiration.getTime())) {
+      errors.push('La fecha de caducidad no es válida.');
+    } else {
+      payload.expirationDate = expirationRaw;
+      preview.caducidad = expirationRaw;
+    }
+  }
+
+  const priceRaw = values.precio_unitario;
+  if (priceRaw === '') {
+    errors.push('El precio unitario es obligatorio.');
+  } else {
+    const parsedPrice = Number(priceRaw);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+      errors.push('El precio unitario debe ser un número positivo.');
+    } else {
+      const normalizedPrice = Number(parsedPrice.toFixed(2));
+      if (normalizedPrice !== Number(product.precio_unitario)) {
+        payload.unitPrice = normalizedPrice;
+        preview.precio_unitario = normalizedPrice;
+      }
+    }
+  }
+
+  const hasPayloadChanges = Object.keys(payload).length > 0;
+  const hasStockChange = typeof stockTarget === 'number';
+
+  if (!hasPayloadChanges && !hasStockChange) {
+    errors.push('No se detectaron cambios en el producto.');
+  }
+
+  if (errors.length) {
+    return { errors };
+  }
+
+  return { payload, preview, stockTarget };
+}
+
+function stageProductUpdate(productId, payload = {}, preview = {}, stockTarget = null) {
+  const productIndex = appState.products.findIndex(product => String(product.id) === String(productId));
+  if (productIndex === -1) {
+    return;
+  }
+
+  const currentProduct = appState.products[productIndex];
+  const existingChange = editSession.products.get(productId) || {};
+  const snapshotProduct = editSession.snapshot?.products?.find(product => String(product.id) === String(productId));
+  const baseStock = existingChange.baseStock ?? snapshotProduct?.stock_actual ?? currentProduct.stock_actual ?? 0;
+
+  const mergedPayload = { ...(existingChange.payload || {}) };
+  Object.entries(payload || {}).forEach(([field, value]) => {
+    if (value === undefined) {
+      return;
+    }
+    mergedPayload[field] = value;
+  });
+
+  const mergedPreview = { ...(existingChange.preview || {}) };
+  Object.entries(preview || {}).forEach(([field, value]) => {
+    mergedPreview[field] = value;
+  });
+
+  const nextProductState = { ...currentProduct };
+  Object.entries(mergedPreview).forEach(([field, value]) => {
+    nextProductState[field] = value;
+  });
+
+  const nextStockTarget = typeof stockTarget === 'number'
+    ? stockTarget
+    : (typeof existingChange.stockTarget === 'number' ? existingChange.stockTarget : null);
+
+  appState.products[productIndex] = nextProductState;
+  editSession.products.set(productId, {
+    action: 'update',
+    payload: Object.keys(mergedPayload).length ? mergedPayload : null,
+    preview: mergedPreview,
+    stockTarget: nextStockTarget,
+    baseStock,
+    sku: nextProductState.sku,
+    nombre: nextProductState.nombre
+  });
+  refreshInventoryWidgets();
 }

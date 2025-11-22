@@ -1,0 +1,827 @@
+# Prisma ORM Development Guide for Easy-Stock App
+
+This comprehensive guide will help your coding agent build the **Easy-Stock** inventory management application using Prisma ORM with best practices for TypeScript, database design, and performance optimization.
+
+## 1. Core Concepts & Architecture
+
+### What is Prisma?
+
+Prisma is a next-generation TypeScript ORM that provides:
+- **Type-safe database access** - Auto-generated types from your schema
+- **Intuitive API** - Readable queries that resemble standard TypeScript objects
+- **Declarative migrations** - Version-controlled database schema changes
+- **Prisma Studio** - Visual database browser and editor
+
+### Key Components
+
+1. **Prisma Schema** (`schema.prisma`) - Single source of truth for your data model
+2. **Prisma Client** - Auto-generated, type-safe query builder
+3. **Prisma Migrate** - Database migration system
+4. **Prisma Studio** - Database GUI for development
+
+***
+
+## 2. Initial Setup for Easy-Stock
+
+### Installation
+
+```bash
+# Install Prisma dependencies
+npm install @prisma/client
+npm install -D prisma typescript ts-node @types/node
+
+# Initialize Prisma (creates prisma directory and schema.prisma)
+npx prisma init --db
+```
+
+### Environment Configuration
+
+Create/update `.env` file:
+
+```env
+DATABASE_URL="postgresql://user:password@localhost:5432/easystock?schema=public"
+```
+
+***
+
+## 3. Schema Design for Easy-Stock
+
+Based on your requirements (dashboard, products, alerts, automation), here's a recommended schema structure:
+
+### `prisma/schema.prisma`
+
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Product Management
+model Product {
+  id                String      @id @default(cuid())
+  sku               String      @unique
+  name              String
+  description       String?
+  category          String
+  currentStock      Int         @default(0)
+  minStockLevel     Int         @default(10)
+  maxStockLevel     Int?
+  reorderPoint      Int         @default(20)
+  unitPrice         Decimal     @db.Decimal(10, 2)
+  location          String?     // Warehouse location
+  supplier          String?
+  
+  // Timestamps
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  // Relations
+  stockMovements    StockMovement[]
+  alerts            Alert[]
+  invoiceItems      InvoiceItem[]
+  
+  @@index([sku])
+  @@index([category])
+}
+
+// Stock Movement Tracking
+model StockMovement {
+  id                String      @id @default(cuid())
+  productId         String
+  product           Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  movementType      MovementType // IN, OUT, ADJUSTMENT
+  quantity          Int
+  previousStock     Int
+  newStock          Int
+  reason            String?
+  reference         String?     // Order number, invoice reference, etc.
+  
+  // Who performed the action
+  performedBy       String?
+  performedAt       DateTime    @default(now())
+  
+  // Voice interaction tracking
+  isVoiceInput      Boolean     @default(false)
+  voiceTranscript   String?
+  
+  @@index([productId])
+  @@index([performedAt])
+}
+
+enum MovementType {
+  IN              // Stock received
+  OUT             // Stock sold/shipped
+  ADJUSTMENT      // Manual adjustment
+  RETURN          // Product return
+}
+
+// Alert System
+model Alert {
+  id                String       @id @default(cuid())
+  productId         String?
+  product           Product?     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  severity          AlertSeverity
+  type              AlertType
+  message           String
+  description       String?
+  
+  isResolved        Boolean      @default(false)
+  resolvedAt        DateTime?
+  resolvedBy        String?
+  
+  contactPhone      String?      // Superior contact for urgent alerts
+  
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  
+  @@index([severity])
+  @@index([isResolved])
+  @@index([createdAt])
+}
+
+enum AlertSeverity {
+  CRITICAL        // Grave - Immediate action required
+  WARNING         // Atención - Action needed soon
+  INFO            // Leve - Informational
+  NOTICE          // Informativa - General notice
+}
+
+enum AlertType {
+  LOW_STOCK
+  OUT_OF_STOCK
+  OVERSTOCK
+  EXPIRING_SOON
+  DATA_INCONSISTENCY
+  SYSTEM
+}
+
+// Invoice Management
+model Invoice {
+  id                String        @id @default(cuid())
+  invoiceNumber     String        @unique
+  customerName      String?
+  customerEmail     String?
+  customerPhone     String?
+  
+  status            InvoiceStatus @default(PENDING)
+  totalAmount       Decimal       @db.Decimal(10, 2)
+  
+  issuedDate        DateTime      @default(now())
+  dueDate           DateTime?
+  paidDate          DateTime?
+  
+  // Relations
+  items             InvoiceItem[]
+  
+  @@index([status])
+  @@index([dueDate])
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model InvoiceItem {
+  id                String    @id @default(cuid())
+  invoiceId         String
+  invoice           Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  
+  productId         String
+  product           Product   @relation(fields: [productId], references: [id])
+  
+  quantity          Int
+  unitPrice         Decimal   @db.Decimal(10, 2)
+  totalPrice        Decimal   @db.Decimal(10, 2)
+  
+  @@index([invoiceId])
+  @@index([productId])
+}
+
+// Task Management & Priorities
+model Task {
+  id                String      @id @default(cuid())
+  title             String
+  description       String?
+  priority          TaskPriority
+  status            TaskStatus  @default(PENDING)
+  
+  assignedTo        String?
+  dueDate           DateTime?
+  completedAt       DateTime?
+  
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  @@index([priority])
+  @@index([status])
+  @@index([dueDate])
+}
+
+enum TaskPriority {
+  URGENT
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// Warehouse Space Management
+model WarehouseSpace {
+  id                String    @id @default(cuid())
+  name              String    @unique
+  totalCapacity     Int       // Total space units
+  usedCapacity      Int       @default(0)
+  location          String?
+  
+  updatedAt         DateTime  @updatedAt
+}
+
+// Data Inconsistency Log (for LLM resolution)
+model DataInconsistency {
+  id                String    @id @default(cuid())
+  csvData           String    @db.Text // Original CSV data
+  detectedIssues    String    @db.Text // JSON array of issues
+  
+  isResolved        Boolean   @default(false)
+  resolution        String?   @db.Text // LLM suggested resolution
+  appliedFix        Boolean   @default(false)
+  
+  createdAt         DateTime  @default(now())
+  resolvedAt        DateTime?
+  
+  @@index([isResolved])
+  @@index([createdAt])
+}
+```
+
+### Schema Organization for Large Projects
+
+For better maintainability, consider organizing schemas by feature:
+
+```
+prisma/
+├── schema/
+│   ├── base.prisma          # Datasource and generator config
+│   ├── product.prisma       # Product models
+│   ├── alert.prisma         # Alert models
+│   ├── invoice.prisma       # Invoice models
+│   └── task.prisma          # Task models
+```
+
+Then combine them with a script in `package.json`:
+
+```json
+{
+  "scripts": {
+    "prisma:build": "cat prisma/schema/*.prisma > prisma/schema.prisma",
+    "prisma:generate": "npm run prisma:build && prisma generate",
+    "prisma:migrate": "npm run prisma:build && prisma migrate dev"
+  }
+}
+```
+
+***
+
+## 4. Migration Workflow
+
+### Development Environment
+
+```bash
+# Create and apply migration
+npx prisma migrate dev --name init_easystock
+
+# Generate Prisma Client after schema changes
+npx prisma generate
+
+# Reset database (⚠️ deletes all data)
+npx prisma migrate reset
+
+# Prototype without migrations (faster iteration)
+npx prisma db push
+```
+
+### Production Environment
+
+```bash
+# Deploy migrations to production
+npx prisma migrate deploy
+```
+
+### Best Practices for Migrations
+
+1. **Always create migrations in development first**
+2. **Use descriptive migration names**: `add_voice_tracking`, `update_alert_severity`
+3. **Review generated SQL** before applying to production
+4. **Backup database** before running migrations in production
+5. **Use CI/CD** to automatically deploy migrations
+
+***
+
+## 5. Prisma Client Setup & Singleton Pattern
+
+Create a single Prisma Client instance to avoid connection pool exhaustion:
+
+### `lib/prisma.ts`
+
+```typescript
+import { PrismaClient } from '@prisma/client'
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined
+}
+
+export const prisma = 
+  globalForPrisma.prisma ?? 
+  new PrismaClient({
+    log: process.env.NODE_ENV === 'development' 
+      ? ['query', 'error', 'warn'] 
+      : ['error'],
+  })
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForPrisma.prisma = prisma
+}
+
+export default prisma
+```
+
+### Usage in Application
+
+```typescript
+import prisma from '@/lib/prisma'
+
+// Now use prisma throughout your app
+const products = await prisma.product.findMany()
+```
+
+***
+
+## 6. Query Patterns for Easy-Stock Features
+
+### Dashboard - Product Table with Alerts
+
+```typescript
+// Get all products with alert counts
+async function getDashboardProducts() {
+  const products = await prisma.product.findMany({
+    include: {
+      alerts: {
+        where: { isResolved: false },
+        select: { id: true, severity: true }
+      },
+      _count: {
+        select: { stockMovements: true }
+      }
+    },
+    orderBy: { updatedAt: 'desc' }
+  })
+  
+  return products.map(product => ({
+    ...product,
+    alertCount: product.alerts.length,
+    hasLowStock: product.currentStock <= product.minStockLevel,
+    stockHealth: calculateStockHealth(product)
+  }))
+}
+
+function calculateStockHealth(product: any): number {
+  if (product.currentStock === 0) return 0
+  if (product.currentStock <= product.minStockLevel) return 30
+  if (product.currentStock <= product.reorderPoint) return 60
+  return 100
+}
+```
+
+### Dashboard - Alert System
+
+```typescript
+// Get alerts grouped by severity
+async function getAlertSummary() {
+  const alerts = await prisma.alert.groupBy({
+    by: ['severity'],
+    where: { isResolved: false },
+    _count: { id: true }
+  })
+  
+  return {
+    critical: alerts.find(a => a.severity === 'CRITICAL')?._count.id || 0,
+    warning: alerts.find(a => a.severity === 'WARNING')?._count.id || 0,
+    info: alerts.find(a => a.severity === 'INFO')?._count.id || 0,
+    notice: alerts.find(a => a.severity === 'NOTICE')?._count.id || 0
+  }
+}
+
+// Get recent unresolved alerts
+async function getRecentAlerts() {
+  return prisma.alert.findMany({
+    where: { isResolved: false },
+    include: {
+      product: {
+        select: { id: true, name: true, sku: true }
+      }
+    },
+    orderBy: [
+      { severity: 'asc' }, // CRITICAL first
+      { createdAt: 'desc' }
+    ],
+    take: 10
+  })
+}
+```
+
+### Warehouse Space Calculation
+
+```typescript
+// Calculate warehouse occupancy percentage
+async function getWarehouseOccupancy() {
+  const spaces = await prisma.warehouseSpace.findMany()
+  
+  const total = spaces.reduce((sum, s) => sum + s.totalCapacity, 0)
+  const used = spaces.reduce((sum, s) => sum + s.usedCapacity, 0)
+  
+  return {
+    totalCapacity: total,
+    usedCapacity: used,
+    percentage: total > 0 ? (used / total) * 100 : 0
+  }
+}
+```
+
+### Next Week Invoices
+
+```typescript
+// Get invoices due in the next 7 days
+async function getUpcomingInvoices() {
+  const today = new Date()
+  const nextWeek = new Date()
+  nextWeek.setDate(today.getDate() + 7)
+  
+  return prisma.invoice.findMany({
+    where: {
+      dueDate: {
+        gte: today,
+        lte: nextWeek
+      },
+      status: { in: ['PENDING', 'OVERDUE'] }
+    },
+    include: {
+      items: {
+        include: {
+          product: {
+            select: { name: true, sku: true }
+          }
+        }
+      }
+    },
+    orderBy: { dueDate: 'asc' }
+  })
+}
+```
+
+### Stock Movement Tracking (Voice Integration)
+
+```typescript
+// Record stock movement with voice support
+async function recordStockMovement(data: {
+  productId: string
+  movementType: 'IN' | 'OUT' | 'ADJUSTMENT'
+  quantity: number
+  reason?: string
+  performedBy?: string
+  isVoiceInput?: boolean
+  voiceTranscript?: string
+}) {
+  return prisma.$transaction(async (tx) => {
+    // Get current product stock
+    const product = await tx.product.findUnique({
+      where: { id: data.productId }
+    })
+    
+    if (!product) throw new Error('Product not found')
+    
+    // Calculate new stock
+    let newStock = product.currentStock
+    if (data.movementType === 'IN') {
+      newStock += data.quantity
+    } else if (data.movementType === 'OUT') {
+      newStock -= data.quantity
+    } else {
+      newStock = data.quantity // ADJUSTMENT sets absolute value
+    }
+    
+    // Create stock movement record
+    const movement = await tx.stockMovement.create({
+      data: {
+        productId: data.productId,
+        movementType: data.movementType,
+        quantity: data.quantity,
+        previousStock: product.currentStock,
+        newStock: newStock,
+        reason: data.reason,
+        performedBy: data.performedBy,
+        isVoiceInput: data.isVoiceInput || false,
+        voiceTranscript: data.voiceTranscript
+      }
+    })
+    
+    // Update product stock
+    await tx.product.update({
+      where: { id: data.productId },
+      data: { currentStock: newStock }
+    })
+    
+    // Check if alert needed
+    if (newStock <= product.minStockLevel) {
+      await tx.alert.create({
+        data: {
+          productId: data.productId,
+          severity: newStock === 0 ? 'CRITICAL' : 'WARNING',
+          type: newStock === 0 ? 'OUT_OF_STOCK' : 'LOW_STOCK',
+          message: `${product.name} stock level critical`,
+          description: `Current stock: ${newStock}, Min level: ${product.minStockLevel}`
+        }
+      })
+    }
+    
+    return movement
+  })
+}
+```
+
+### Data Inconsistency Resolution (LLM Integration)
+
+```typescript
+// Log and process CSV inconsistencies
+async function processCSVInconsistency(csvData: string) {
+  // Create inconsistency record
+  const record = await prisma.dataInconsistency.create({
+    data: {
+      csvData: csvData,
+      detectedIssues: JSON.stringify([
+        'Missing product IDs',
+        'Duplicate entries',
+        'Invalid stock quantities'
+      ])
+    }
+  })
+  
+  // TODO: Send to LLM API for resolution
+  // const resolution = await callLLMAPI(csvData)
+  
+  // Update with resolution
+  // await prisma.dataInconsistency.update({
+  //   where: { id: record.id },
+  //   data: {
+  //     isResolved: true,
+  //     resolution: resolution,
+  //     resolvedAt: new Date()
+  //   }
+  // })
+  
+  return record
+}
+```
+
+***
+
+## 7. Performance Optimization
+
+### Query Optimization
+
+```typescript
+// ❌ BAD: N+1 query problem
+async function getBadProducts() {
+  const products = await prisma.product.findMany()
+  for (const product of products) {
+    const alerts = await prisma.alert.findMany({
+      where: { productId: product.id }
+    })
+  }
+}
+
+// ✅ GOOD: Use include to fetch relations
+async function getGoodProducts() {
+  return prisma.product.findMany({
+    include: {
+      alerts: { where: { isResolved: false } }
+    }
+  })
+}
+```
+
+### Pagination
+
+```typescript
+// Efficient pagination with cursor-based approach
+async function getProductsPaginated(cursor?: string, limit = 20) {
+  return prisma.product.findMany({
+    take: limit,
+    skip: cursor ? 1 : 0,
+    cursor: cursor ? { id: cursor } : undefined,
+    orderBy: { createdAt: 'desc' }
+  })
+}
+```
+
+### Indexing Strategy
+
+Already included in schema with `@@index` directives:
+- Product: `sku`, `category`
+- StockMovement: `productId`, `performedAt`
+- Alert: `severity`, `isResolved`, `createdAt`
+- Task: `priority`, `status`, `dueDate`
+
+### Connection Pooling
+
+For serverless/cloud deployment:
+
+```typescript
+// Add to schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Enable connection pooling
+  relationMode = "prisma"
+}
+```
+
+***
+
+## 8. Testing with Prisma
+
+### Unit Testing Setup
+
+```typescript
+// tests/setup.ts
+import { PrismaClient } from '@prisma/client'
+import { mockDeep, mockReset, DeepMockProxy } from 'jest-mock-extended'
+
+import prisma from '@/lib/prisma'
+
+jest.mock('@/lib/prisma', () => ({
+  __esModule: true,
+  default: mockDeep<PrismaClient>(),
+}))
+
+beforeEach(() => {
+  mockReset(prismaMock)
+})
+
+export const prismaMock = prisma as unknown as DeepMockProxy<PrismaClient>
+```
+
+### Example Test
+
+```typescript
+// tests/products.test.ts
+import { prismaMock } from './setup'
+
+test('should create product', async () => {
+  const product = {
+    id: '1',
+    sku: 'TEST-001',
+    name: 'Test Product',
+    currentStock: 100,
+    // ... other fields
+  }
+  
+  prismaMock.product.create.mockResolvedValue(product)
+  
+  const result = await createProduct(product)
+  expect(result).toEqual(product)
+})
+```
+
+***
+
+## 9. Prisma Studio for Development
+
+```bash
+# Open visual database browser
+npx prisma studio
+```
+
+Access at `http://localhost:5555` to:
+- View and edit data visually
+- Test queries
+- Debug relationships
+- Seed initial data
+
+***
+
+## 10. Best Practices Checklist
+
+### Schema Design
+- ✅ Use meaningful model and field names
+- ✅ Add indexes for frequently queried fields
+- ✅ Use enums for fixed value sets
+- ✅ Include timestamps (`createdAt`, `updatedAt`)
+- ✅ Define proper relations with `onDelete` cascades
+- ✅ Use `@@index` for compound queries
+
+### Client Usage
+- ✅ Use singleton pattern for PrismaClient
+- ✅ Close connections in serverless functions
+- ✅ Use transactions for multi-step operations
+- ✅ Leverage `include` and `select` to control data fetching
+- ✅ Implement pagination for large datasets
+
+### Migrations
+- ✅ Never edit migration files manually
+- ✅ Use descriptive migration names
+- ✅ Test migrations on staging before production
+- ✅ Keep migration history in version control
+- ✅ Use `prisma migrate deploy` in CI/CD
+
+### Performance
+- ✅ Avoid N+1 queries with proper `include`
+- ✅ Use connection pooling for serverless
+- ✅ Implement caching for frequently accessed data
+- ✅ Monitor query performance with Prisma Optimize
+- ✅ Use `select` to fetch only needed fields
+
+### Security
+- ✅ Never expose raw database URLs in code
+- ✅ Use environment variables for credentials
+- ✅ Validate input before database operations
+- ✅ Implement proper error handling
+- ✅ Use row-level security where appropriate
+
+***
+
+## 11. Quick Reference Commands
+
+```bash
+# Development
+npx prisma init                    # Initialize Prisma
+npx prisma generate               # Generate Prisma Client
+npx prisma migrate dev            # Create and apply migration
+npx prisma db push                # Sync schema without migration
+npx prisma studio                 # Open visual editor
+
+# Production
+npx prisma migrate deploy         # Apply pending migrations
+npx prisma db seed                # Run seed script
+
+# Utilities
+npx prisma format                 # Format schema file
+npx prisma validate               # Validate schema
+npx prisma db pull                # Pull schema from existing DB
+npx prisma migrate reset          # Reset database (⚠️ destructive)
+```
+
+***
+
+## Summary
+
+This guide provides your coding agent with everything needed to build the Easy-Stock application using Prisma:
+
+1. **Complete schema design** tailored to your inventory management needs
+2. **Query patterns** for dashboard, alerts, invoices, and voice integration
+3. **Performance optimization** strategies
+4. **Migration workflow** for development and production
+5. **Best practices** for type-safety, testing, and scalability
+
+The schema includes all core components: products, stock movements, alerts (with severity levels), invoices, tasks, warehouse space tracking, and data inconsistency logging for LLM resolution.
+
+**Next Steps:**
+1. Run `npx prisma init --db` to get started
+2. Copy the schema to `prisma/schema.prisma`
+3. Run `npx prisma migrate dev --name init` to create tables
+4. Implement query functions in your application
+5. Integrate voice input tracking (Whisper API) with stock movements
+6. Connect LLM API for CSV inconsistency resolution
+
+[1](https://www.prisma.io/docs)
+[2](http://arxiv.org/abs/2205.07780)
+[3](https://arxiv.org/pdf/2412.06269.pdf)
+[4](https://arxiv.org/pdf/2503.02770.pdf)
+[5](https://arxiv.org/pdf/2309.11406.pdf)
+[6](https://dl.acm.org/doi/pdf/10.1145/3651140)
+[7](http://arxiv.org/pdf/2407.06228.pdf)
+[8](https://arxiv.org/pdf/2408.14431.pdf)
+[9](https://arxiv.org/html/2405.17681v1)
+[10](https://www.prisma.io)
+[11](https://www.prisma.io/docs/getting-started)
+[12](https://www.prisma.io/docs/guides)
+[13](https://www.prisma.io/docs/guides/nextjs)
+[14](https://www.prisma.io/typescript)
+[15](https://www.linkedin.com/pulse/how-organize-prisma-schemas-feature-based-gabriel-dem%C3%A9trio-gauche-rql3f)
+[16](https://www.prisma.io/docs/orm/prisma-migrate/understanding-prisma-migrate/mental-model)
+[17](https://www.prisma.io/docs/orm/prisma-client/queries/query-optimization-performance)
+[18](https://leapcell.io/blog/modernizing-database-interactions-with-prisma-in-typescript)

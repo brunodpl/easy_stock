@@ -1,4 +1,5 @@
-// server.js
+// ===== Easy Stock API Server =====
+// Serves the dashboard assets and exposes CRUD endpoints powered by Prisma.
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const path = require('path');
@@ -7,16 +8,150 @@ const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// ===== Middleware & Static Assets =====
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// ========== API ENDPOINTS ==========
+// ===== Validation Helpers =====
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RAW_STATUS_MAP = {
+  pendiente: 'PENDING',
+  pending: 'PENDING',
+  vencida: 'OVERDUE',
+  overdue: 'OVERDUE',
+  pagada: 'PAID',
+  paid: 'PAID'
+};
+const DISPLAYED_INVOICE_STATUSES = new Set(['PENDING', 'OVERDUE']);
+
+class ValidationError extends Error {
+  constructor(message, details = []) {
+    super(message);
+    this.name = 'ValidationError';
+    this.details = details;
+  }
+}
+
+function validateUUID(req, res, next) {
+  const { id } = req.params;
+  if (!UUID_REGEX.test(id)) {
+    return res.status(400).json({ error: 'Invalid UUID format' });
+  }
+  next();
+}
+
+function normalizeInvoiceStatus(status) {
+  if (!status) return 'PENDING';
+  const normalized = RAW_STATUS_MAP[String(status).trim().toLowerCase()];
+  if (normalized) return normalized;
+  return String(status).trim().toUpperCase();
+}
+
+// ===== Product Payload Normalization =====
+function buildProductUpdateData(payload = {}, currentProduct = {}) {
+  const data = {};
+  const errors = [];
+
+  const stringFields = [
+    ['name', 'Nombre', true],
+    ['sku', 'SKU', true],
+    ['category', 'Categoría', false],
+    ['zone', 'Zona', false],
+    ['supplier', 'Proveedor', false],
+    ['numberOfUnits', 'Número de unidades', false]
+  ];
+
+  stringFields.forEach(([field, label, isRequired]) => {
+    if (!(field in payload)) {
+      return;
+    }
+
+    const rawValue = payload[field];
+    if (rawValue === null || rawValue === undefined) {
+      if (isRequired) {
+        errors.push(`${label} no puede estar vacío.`);
+      } else {
+        data[field] = null;
+      }
+      return;
+    }
+
+    const value = String(rawValue).trim();
+    if (!value) {
+      if (isRequired) {
+        errors.push(`${label} no puede estar vacío.`);
+      } else {
+        data[field] = null;
+      }
+    } else {
+      data[field] = value;
+    }
+  });
+
+  const intFields = [
+    ['minStock', 'Stock mínimo'],
+    ['maxStock', 'Stock máximo'],
+    ['currentStock', 'Stock actual']
+  ];
+
+  intFields.forEach(([field, label]) => {
+    if (field in payload) {
+      const parsed = Number(payload[field]);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        errors.push(`${label} debe ser un número positivo.`);
+      } else {
+        data[field] = Math.floor(parsed);
+      }
+    }
+  });
+
+  if ('unitPrice' in payload) {
+    const parsed = Number(payload.unitPrice);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      errors.push('Precio unitario debe ser un número positivo.');
+    } else {
+      data.unitPrice = parsed;
+    }
+  }
+
+  if ('expirationDate' in payload) {
+    const raw = payload.expirationDate;
+    if (raw === null || raw === '') {
+      data.expirationDate = null;
+    } else {
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) {
+        errors.push('La fecha de caducidad no es válida.');
+      } else {
+        data.expirationDate = parsed;
+      }
+    }
+  }
+
+  const nextMin = data.minStock ?? currentProduct.minStock ?? null;
+  const nextMax = data.maxStock ?? currentProduct.maxStock ?? null;
+  if (nextMin !== null && nextMax !== null && nextMin > nextMax) {
+    errors.push('El stock mínimo no puede ser mayor que el stock máximo.');
+  }
+
+  if (!Object.keys(data).length) {
+    errors.push('No se enviaron cambios válidos.');
+  }
+
+  if (errors.length) {
+    throw new ValidationError('Datos de producto inválidos', errors);
+  }
+
+  return data;
+}
+
+// ===== API Endpoints =====
 
 // 📦 GET: Obtener todos los productos
 app.get('/api/products', async (req, res) => {
   try {
     const products = await prisma.product.findMany({
+      where: { deletedAt: null },
       orderBy: { name: 'asc' }
     });
     res.json(products);
@@ -66,7 +201,9 @@ app.get('/api/kpis', async (req, res) => {
     });
 
     const warehouseConfig = await prisma.warehouseConfig.findFirst();
-    const totalCapacity = warehouseConfig?.totalCapacity || 1000;
+    const totalCapacity = warehouseConfig?.totalCapacity && warehouseConfig.totalCapacity > 0
+      ? warehouseConfig.totalCapacity
+      : 1000;
     const occupiedPercentage = totalCapacity
       ? Math.min((totalProducts / totalCapacity) * 100, 100)
       : null;
@@ -92,14 +229,29 @@ app.get('/api/kpis', async (req, res) => {
 // 🧾 GET: Facturas próximas
 app.get('/api/invoices', async (req, res) => {
   try {
-    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const invoices = await prisma.invoice.findMany({
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7);
+
+    const invoicesRaw = await prisma.invoice.findMany({
       where: {
-        status: { in: ['pendiente', 'vencida'] },
-        limitDate: { lte: nextWeek }
+        deletedAt: null,
+        limitDate: {
+          gte: today,
+          lte: nextWeek
+        }
       },
       orderBy: { limitDate: 'asc' }
     });
+
+    const invoices = invoicesRaw
+      .map((invoice) => ({
+        ...invoice,
+        status: normalizeInvoiceStatus(invoice.status)
+      }))
+      .filter((invoice) => DISPLAYED_INVOICE_STATUSES.has(invoice.status));
+
     res.json(invoices);
   } catch (error) {
     console.error('Error fetching invoices:', error);
@@ -121,23 +273,31 @@ app.get('/api/tasks', async (req, res) => {
 });
 
 // 🧾 DELETE: Factura
-app.delete('/api/invoices/:id', async (req, res) => {
+app.delete('/api/invoices/:id', validateUUID, async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.invoice.delete({ where: { id } });
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      select: { deletedAt: true }
+    });
+
+    if (!invoice || invoice.deletedAt) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    await prisma.invoice.update({
+      where: { id },
+      data: { deletedAt: new Date() }
+    });
     res.status(204).end();
   } catch (error) {
     console.error('Error deleting invoice:', error);
-    if (error.code === 'P2025') {
-      res.status(404).json({ error: 'Invoice not found' });
-    } else {
-      res.status(500).json({ error: 'Error deleting invoice' });
-    }
+    res.status(500).json({ error: 'Error deleting invoice' });
   }
 });
 
 // ✅ DELETE: Tarea
-app.delete('/api/tasks/:id', async (req, res) => {
+app.delete('/api/tasks/:id', validateUUID, async (req, res) => {
   const { id } = req.params;
   try {
     await prisma.task.delete({ where: { id } });
@@ -164,35 +324,119 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
+// ✏️ PUT: Actualizar detalles de producto
+app.put('/api/products/:id', validateUUID, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const currentProduct = await prisma.product.findUnique({
+      where: { id },
+      select: {
+        minStock: true,
+        maxStock: true,
+        deletedAt: true
+      }
+    });
+
+    if (!currentProduct || currentProduct.deletedAt) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const updateData = buildProductUpdateData(req.body, currentProduct);
+    const updatedProduct = await prisma.product.update({
+      where: { id },
+      data: updateData
+    });
+    res.json(updatedProduct);
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      return res.status(400).json({ error: error.message, details: error.details });
+    }
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'SKU already exists' });
+    }
+    console.error('Error updating product:', error);
+    res.status(500).json({ error: 'Error updating product' });
+  }
+});
+
+// 🗑️ DELETE: Producto (soft delete)
+app.delete('/api/products/:id', validateUUID, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const product = await prisma.product.findUnique({
+      where: { id },
+      select: { deletedAt: true }
+    });
+
+    if (!product || product.deletedAt) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    await prisma.product.update({
+      where: { id },
+      data: { deletedAt: new Date() }
+    });
+    res.status(204).end();
+  } catch (error) {
+    console.error('Error deleting product:', error);
+    res.status(500).json({ error: 'Error deleting product' });
+  }
+});
+
 // 🔄 PUT: Actualizar stock de producto
-app.put('/api/products/:id/stock', async (req, res) => {
+app.put('/api/products/:id/stock', validateUUID, async (req, res) => {
   try {
     const { id } = req.params;
     const { cantidad, tipo, motivo } = req.body;
 
-    // Actualizar stock y crear movimiento
-    const [product, movement] = await prisma.$transaction([
+    if (typeof cantidad !== 'number' || Number.isNaN(cantidad) || cantidad <= 0) {
+      return res.status(400).json({ error: 'cantidad must be a positive number' });
+    }
+
+    if (tipo !== 'entrada' && tipo !== 'salida') {
+      return res.status(400).json({ error: "tipo must be 'entrada' or 'salida'" });
+    }
+
+    const currentProduct = await prisma.product.findUnique({
+      where: { id },
+      select: { currentStock: true, deletedAt: true }
+    });
+
+    if (!currentProduct || currentProduct.deletedAt) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const quantityBefore = currentProduct.currentStock ?? 0;
+    const quantityAfter = tipo === 'entrada'
+      ? quantityBefore + cantidad
+      : quantityBefore - cantidad;
+
+    if (quantityAfter < 0) {
+      return res.status(400).json({ error: 'Stock cannot be negative' });
+    }
+
+    const [product] = await prisma.$transaction([
       prisma.product.update({
-        where: { id: parseInt(id) },
-        data: {
-          stock_actual: tipo === 'entrada' 
-            ? { increment: cantidad }
-            : { decrement: cantidad }
-        }
+        where: { id },
+        data: { currentStock: quantityAfter }
       }),
       prisma.stockMovement.create({
         data: {
-          productId: parseInt(id),
-          tipo,
-          cantidad,
-          motivo
+          productId: id,
+          movementType: tipo,
+          quantity: cantidad,
+          quantityBefore,
+          quantityAfter,
+          reference: motivo,
+          notes: motivo
         }
       })
     ]);
 
     res.json(product);
   } catch (error) {
-    res.status(500).json({ error: 'Error updating stock' });
+    console.error('Error updating stock:', error);
+    res.status(500).json({ error: 'Error updating stock', details: error.message });
   }
 });
 

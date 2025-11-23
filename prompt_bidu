@@ -1,0 +1,748 @@
+🎯 Contexto del Proyecto
+Proyecto: EasyStock - Sistema de gestión de inventario para PyMEs
+Tarea Actual: Crear microservicio Python para extraer datos de albaranes usando OCR local + LLM
+
+Stack Actual:
+
+Backend: Node.js + Express + Prisma + PostgreSQL
+
+Frontend: HTML/CSS/JS vanilla
+
+Nuevo: Microservicio Python con FastAPI + Tesseract OCR + Ollama
+
+📂 Estructura de Archivos a Crear
+text
+easystock/
+├── ocr-service/                    # 🆕 NUEVO MICROSERVICIO
+│   ├── main.py                     # FastAPI server principal
+│   ├── services/
+│   │   ├── __init__.py            # Archivo vacío (requerido)
+│   │   ├── ocr_service.py         # Servicio Tesseract OCR
+│   │   └── llm_service.py         # Servicio Ollama LLM
+│   ├── models/
+│   │   ├── __init__.py            # Archivo vacío
+│   │   └── schemas.py             # Modelos Pydantic
+│   ├── utils/
+│   │   ├── __init__.py            # Archivo vacío
+│   │   └── image_utils.py         # Utilidades procesamiento imágenes
+│   ├── uploads/                    # Carpeta para albaranes temporales
+│   ├── .env                        # Variables de entorno
+│   ├── requirements.txt            # Dependencias (YA INSTALADAS)
+│   └── test_system.py             # Test completo del sistema
+🔧 Archivos a Crear (Orden de Implementación)
+1️⃣ ocr-service/models/schemas.py
+Propósito: Definir modelos de datos con Pydantic para validación
+
+python
+"""
+Modelos de datos para el sistema de extracción de albaranes
+"""
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from datetime import date
+
+class ProductoAlbaran(BaseModel):
+    """Modelo para un producto individual del albarán"""
+    codigo: Optional[str] = Field(None, description="Código del producto")
+    descripcion: str = Field(..., description="Descripción del producto")
+    cantidad: int = Field(..., ge=1, description="Cantidad (mínimo 1)")
+    unidad: str = Field(..., description="Unidad de medida (Uds, Kg, L, etc.)")
+    peso_volumen: Optional[str] = Field(None, description="Peso o volumen por unidad")
+    lote: Optional[str] = Field(None, description="Número de lote")
+    caducidad: Optional[str] = Field(None, description="Fecha de caducidad YYYY-MM-DD")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "codigo": "1001",
+                "descripcion": "Leche Entera Pascual 1L",
+                "cantidad": 48,
+                "unidad": "Uds",
+                "peso_volumen": "1L",
+                "lote": "L240815",
+                "caducidad": "2024-12-15"
+            }
+        }
+
+class AlbaranExtraido(BaseModel):
+    """Modelo para el albarán completo"""
+    numero_albaran: Optional[str] = Field(None, description="Número del albarán")
+    fecha: Optional[str] = Field(None, description="Fecha de entrega YYYY-MM-DD")
+    proveedor: Optional[str] = Field(None, description="Nombre del proveedor")
+    destinatario: Optional[str] = Field(None, description="Nombre del destinatario")
+    productos: List[ProductoAlbaran] = Field(..., min_length=1, description="Lista de productos")
+    observaciones: Optional[str] = Field(None, description="Observaciones adicionales")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "numero_albaran": "ALB-2024-001234",
+                "fecha": "2024-11-20",
+                "proveedor": "Distribuciones Alimentarias S.L.",
+                "destinatario": "Supermercado La Despensa",
+                "productos": [
+                    {
+                        "codigo": "1001",
+                        "descripcion": "Leche Entera 1L",
+                        "cantidad": 48,
+                        "unidad": "Uds",
+                        "lote": "L240815",
+                        "caducidad": "2024-12-15"
+                    }
+                ],
+                "observaciones": "Revisar temperatura productos refrigerados"
+            }
+        }
+
+class ProcessResponse(BaseModel):
+    """Respuesta del endpoint de procesamiento"""
+    success: bool = Field(..., description="Si el procesamiento fue exitoso")
+    message: str = Field(..., description="Mensaje descriptivo del resultado")
+    data: Optional[AlbaranExtraido] = Field(None, description="Datos extraídos del albarán")
+    ocr_confidence: Optional[float] = Field(None, ge=0, le=1, description="Confianza del OCR (0-1)")
+    processing_time: float = Field(..., description="Tiempo de procesamiento en segundos")
+    
+class HealthResponse(BaseModel):
+    """Respuesta del health check"""
+    status: str
+    ocr: str
+    llm: str
+    modelo_llm: str
+2️⃣ ocr-service/utils/image_utils.py
+Propósito: Funciones para mejorar calidad de imágenes antes del OCR
+
+python
+"""
+Utilidades para procesamiento de imágenes
+Mejora la calidad antes del OCR
+"""
+import cv2
+import numpy as np
+from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
+
+def enhance_image_for_ocr(image_path: str) -> str:
+    """
+    Mejorar imagen para optimizar OCR
+    
+    Aplica:
+    - Conversión a escala de grises
+    - Mejora de contraste (CLAHE)
+    - Reducción de ruido
+    - Binarización adaptativa
+    
+    Args:
+        image_path: Ruta a la imagen original
+        
+    Returns:
+        Ruta a la imagen procesada
+    """
+    try:
+        # Leer imagen
+        img = cv2.imread(image_path)
+        
+        if img is None:
+            raise ValueError(f"No se pudo leer la imagen: {image_path}")
+        
+        # 1. Convertir a escala de grises
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # 2. Mejorar contraste con CLAHE
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        
+        # 3. Reducir ruido
+        denoised = cv2.fastNlMeansDenoising(enhanced, h=10)
+        
+        # 4. Binarización adaptativa (mejor para documentos)
+        binary = cv2.adaptiveThreshold(
+            denoised,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            11,
+            2
+        )
+        
+        # Guardar imagen procesada
+        path_obj = Path(image_path)
+        processed_path = str(path_obj.parent / f"{path_obj.stem}_processed{path_obj.suffix}")
+        cv2.imwrite(processed_path, binary)
+        
+        logger.info(f"✅ Imagen mejorada: {processed_path}")
+        return processed_path
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Error mejorando imagen: {e}. Usando original.")
+        return image_path
+
+def resize_if_too_large(image_path: str, max_width: int = 2000) -> str:
+    """
+    Redimensionar imagen si es muy grande (mejora velocidad)
+    
+    Args:
+        image_path: Ruta a la imagen
+        max_width: Ancho máximo en píxeles
+        
+    Returns:
+        Ruta a la imagen (redimensionada si era necesario)
+    """
+    try:
+        img = cv2.imread(image_path)
+        height, width = img.shape[:2]
+        
+        if width > max_width:
+            ratio = max_width / width
+            new_width = max_width
+            new_height = int(height * ratio)
+            
+            resized = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+            
+            path_obj = Path(image_path)
+            resized_path = str(path_obj.parent / f"{path_obj.stem}_resized{path_obj.suffix}")
+            cv2.imwrite(resized_path, resized)
+            
+            logger.info(f"📏 Imagen redimensionada de {width}x{height} a {new_width}x{new_height}")
+            return resized_path
+        
+        return image_path
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Error redimensionando: {e}")
+        return image_path
+3️⃣ ocr-service/services/ocr_service.py
+Propósito: Servicio de OCR usando Tesseract
+
+python
+"""
+Servicio OCR usando Tesseract
+Extrae texto de imágenes de albaranes
+"""
+import pytesseract
+import logging
+from typing import Tuple
+from pathlib import Path
+from utils.image_utils import enhance_image_for_ocr, resize_if_too_large
+
+logger = logging.getLogger(__name__)
+
+class OCRService:
+    def __init__(self, tesseract_path: str = r'C:\Program Files\Tesseract-OCR\tesseract.exe'):
+        """
+        Inicializar servicio Tesseract OCR
+        
+        Args:
+            tesseract_path: Ruta al ejecutable de Tesseract en Windows
+        """
+        # Configurar ruta de Tesseract (necesario en Windows)
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        
+        # Verificar que funciona
+        try:
+            version = pytesseract.get_tesseract_version()
+            logger.info(f"✅ Tesseract OCR v{version} inicializado")
+        except Exception as e:
+            logger.error(f"❌ Error inicializando Tesseract: {e}")
+            raise RuntimeError(
+                "Tesseract no encontrado. Instalar desde: "
+                "https://github.com/UB-Mannheim/tesseract/wiki"
+            )
+    
+    def extract_text(self, image_path: str) -> Tuple[str, float]:
+        """
+        Extraer texto de imagen usando Tesseract OCR
+        
+        Args:
+            image_path: Ruta a la imagen del albarán
+            
+        Returns:
+            Tuple[str, float]: (texto_completo, confianza_promedio)
+        """
+        try:
+            logger.info(f"🔍 Extrayendo texto de: {image_path}")
+            
+            # Pre-procesamiento
+            resized_path = resize_if_too_large(image_path)
+            processed_path = enhance_image_for_ocr(resized_path)
+            
+            # Configuración para español
+            # PSM 6 = Asume un bloque uniforme de texto
+            config = '--lang spa --psm 6'
+            
+            # Extraer texto
+            text = pytesseract.image_to_string(processed_path, config=config)
+            
+            # Obtener confianza detallada
+            data = pytesseract.image_to_data(
+                processed_path,
+                config=config,
+                output_type=pytesseract.Output.DICT
+            )
+            
+            # Calcular confianza promedio (solo palabras con confianza > 0)
+            confidences = [int(conf) for conf in data['conf'] if int(conf) > 0]
+            avg_confidence = sum(confidences) / len(confidences) / 100 if confidences else 0.0
+            
+            # Limpiar texto
+            text = text.strip()
+            
+            logger.info(f"✅ Extraídas {len(text.split())} palabras (confianza: {avg_confidence:.2%})")
+            
+            return text, avg_confidence
+            
+        except Exception as e:
+            logger.error(f"❌ Error en OCR: {e}")
+            raise
+4️⃣ ocr-service/services/llm_service.py
+Propósito: Servicio LLM usando Ollama para estructurar datos
+
+python
+"""
+Servicio LLM usando Ollama
+Estructura datos extraídos por OCR en formato JSON
+"""
+import ollama
+import json
+import logging
+from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
+
+class LLMService:
+    def __init__(self, model: str = "qwen3:8b"):
+        """
+        Inicializar Ollama con modelo local
+        
+        Args:
+            model: Nombre del modelo (qwen3:8b, gemma3:27b, etc.)
+        """
+        self.model = model
+        self.client = ollama.Client()
+        
+        # Verificar que el modelo existe y Ollama está corriendo
+        try:
+            models = self.client.list()
+            available = [m['name'] for m in models.get('models', [])]
+            
+            if not available:
+                raise RuntimeError(
+                    "No hay modelos de Ollama disponibles. "
+                    "Ejecutar: ollama pull qwen3:8b"
+                )
+            
+            if model not in available:
+                logger.warning(f"⚠️ Modelo {model} no encontrado")
+                logger.info(f"Modelos disponibles: {available}")
+                self.model = available[0]
+                logger.info(f"📌 Usando: {self.model}")
+            else:
+                logger.info(f"✅ Modelo cargado: {self.model}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error conectando con Ollama: {e}")
+            raise RuntimeError(
+                "No se puede conectar con Ollama. "
+                "Asegúrate de que está corriendo: ollama serve"
+            )
+    
+    def structure_albaran_data(self, ocr_text: str) -> Dict[str, Any]:
+        """
+        Estructurar datos del albarán usando LLM
+        
+        Args:
+            ocr_text: Texto extraído por OCR
+            
+        Returns:
+            Dict con datos estructurados del albarán
+        """
+        try:
+            logger.info(f"🧠 Procesando con {self.model}...")
+            
+            prompt = self._build_extraction_prompt(ocr_text)
+            
+            # Llamar a Ollama
+            response = self.client.generate(
+                model=self.model,
+                prompt=prompt,
+                format='json',  # Forzar respuesta JSON
+                options={
+                    'temperature': 0.1,    # Más determinista
+                    'num_predict': 2500,   # Tokens máximos
+                    'top_p': 0.9
+                }
+            )
+            
+            result_text = response['response']
+            
+            # Intentar parsear JSON
+            data = self._parse_json_response(result_text)
+            
+            productos_count = len(data.get('productos', []))
+            logger.info(f"✅ Extraídos {productos_count} productos")
+            
+            return data
+            
+        except Exception as e:
+            logger.error(f"❌ Error en LLM: {e}")
+            raise
+    
+    def _parse_json_response(self, text: str) -> Dict[str, Any]:
+        """Parsear respuesta JSON manejando casos edge"""
+        try:
+            # Intentar parseo directo
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Si está en markdown code block
+            if '```
+                json_str = text.split('```json').split('```
+                return json.loads(json_str)
+            elif '```' in text:
+                json_str = text.split('``````')[0].strip()
+                return json.loads(json_str)
+            else:
+                raise ValueError("El modelo no devolvió JSON válido")
+    
+    def _build_extraction_prompt(self, ocr_text: str) -> str:
+        """Construir prompt optimizado para extracción"""
+        return f"""Eres un asistente experto en extraer información de albaranes de entrega españoles.
+
+TAREA: Analiza el siguiente texto (extraído con OCR de un albarán) y estructura TODA la información en formato JSON válido.
+
+FORMATO JSON REQUERIDO:
+{{
+  "numero_albaran": "ALB-2024-001234",
+  "fecha": "2024-11-20",
+  "proveedor": "Nombre empresa proveedora",
+  "destinatario": "Nombre destinatario",
+  "productos": [
+    {{
+      "codigo": "1001",
+      "descripcion": "Nombre completo del producto",
+      "cantidad": 48,
+      "unidad": "Uds",
+      "peso_volumen": "1L",
+      "lote": "L240815",
+      "caducidad": "2024-12-15"
+    }}
+  ],
+  "observaciones": "Notas adicionales si existen"
+}}
+
+REGLAS CRÍTICAS:
+1. Extrae TODOS los productos que encuentres
+2. Fechas SIEMPRE en formato YYYY-MM-DD
+3. Si un campo no existe, usa null (no cadena vacía)
+4. Cantidades como números enteros sin comillas
+5. No inventes datos - si no está, pon null
+6. Responde SOLO con el JSON, sin explicaciones
+
+TEXTO DEL ALBARÁN:
+{ocr_text}
+
+JSON:"""
+5️⃣ ocr-service/main.py
+Propósito: Servidor FastAPI con endpoints
+
+python
+"""
+EasyStock OCR Microservice
+FastAPI server para procesamiento de albaranes
+"""
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import os
+import time
+import logging
+from pathlib import Path
+
+from services.ocr_service import OCRService
+from services.llm_service import LLMService
+from models.schemas import ProcessResponse, AlbaranExtraido, HealthResponse
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Crear app
+app = FastAPI(
+    title="EasyStock OCR API",
+    description="Microservicio de extracción de datos de albaranes con OCR local",
+    version="1.0.0",
+    docs_url="/docs",  # Swagger UI en /docs
+    redoc_url="/redoc"  # ReDoc en /redoc
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3001"],  # Tu servidor Express
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Inicializar servicios
+logger.info("🚀 Inicializando servicios...")
+try:
+    ocr_service = OCRService()
+    llm_service = LLMService(model="qwen3:8b")
+    logger.info("✅ Todos los servicios inicializados correctamente")
+except Exception as e:
+    logger.error(f"❌ Error inicializando servicios: {e}")
+    raise
+
+# Crear carpeta uploads
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+# ============ ENDPOINTS ============
+
+@app.get("/", tags=["General"])
+async def root():
+    """Health check básico"""
+    return {
+        "service": "EasyStock OCR API",
+        "status": "running",
+        "version": "1.0.0",
+        "docs": "/docs"
+    }
+
+@app.get("/health", response_model=HealthResponse, tags=["General"])
+async def health_check():
+    """Verificar estado de todos los servicios"""
+    try:
+        return HealthResponse(
+            status="healthy",
+            ocr="✅ Tesseract ready",
+            llm=f"✅ Ollama ready",
+            modelo_llm=llm_service.model
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "error": str(e)
+            }
+        )
+
+@app.post("/api/extract-albaran", response_model=ProcessResponse, tags=["OCR"])
+async def extract_albaran(file: UploadFile = File(...)):
+    """
+    Extraer datos de un albarán (imagen o PDF)
+    
+    **Flujo:**
+    1. Guardar archivo subido
+    2. Extraer texto con Tesseract OCR
+    3. Estructurar datos con Ollama
+    4. Devolver JSON estructurado
+    
+    **Formatos soportados:** JPG, PNG, PDF
+    """
+    start_time = time.time()
+    
+    try:
+        logger.info(f"📥 Recibido: {file.filename} ({file.content_type})")
+        
+        # Validar tipo
+        allowed = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf']
+        if file.content_type not in allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tipo no soportado: {file.content_type}. Usar: JPG, PNG, PDF"
+            )
+        
+        # Guardar archivo
+        timestamp = int(time.time())
+        safe_name = f"{timestamp}_{file.filename}"
+        file_path = UPLOAD_DIR / safe_name
+        
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        logger.info(f"💾 Guardado: {file_path}")
+        
+        # PASO 1: OCR
+        logger.info("🔍 Ejecutando OCR...")
+        ocr_text, confidence = ocr_service.extract_text(str(file_path))
+        
+        if not ocr_text or len(ocr_text.strip()) < 10:
+            raise HTTPException(
+                status_code=400,
+                detail="No se extrajo suficiente texto. Imagen borrosa o vacía."
+            )
+        
+        logger.info(f"✅ OCR: {len(ocr_text.split())} palabras (conf: {confidence:.2%})")
+        
+        # PASO 2: LLM
+        logger.info("🧠 Estructurando con LLM...")
+        structured = llm_service.structure_albaran_data(ocr_text)
+        
+        if not structured.get('productos'):
+            raise HTTPException(
+                status_code=400,
+                detail="No se encontraron productos en el albarán"
+            )
+        
+        # Calcular tiempo
+        elapsed = time.time() - start_time
+        
+        logger.info(f"✅ Completado en {elapsed:.2f}s")
+        
+        return ProcessResponse(
+            success=True,
+            message=f"Albarán procesado. {len(structured['productos'])} productos extraídos.",
+            data=AlbaranExtraido(**structured),
+            ocr_confidence=confidence,
+            processing_time=elapsed
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error procesando albarán: {str(e)}"
+        )
+
+if __name__ == "__main__":
+    import uvicorn
+    
+    logger.info("🚀 Iniciando servidor FastAPI...")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
+6️⃣ ocr-service/test_system.py
+Propósito: Test completo del sistema
+
+python
+"""
+Test completo del sistema OCR + LLM
+"""
+from services.ocr_service import OCRService
+from services.llm_service import LLMService
+import json
+
+def main():
+    print("=" * 70)
+    print("🧪 TEST SISTEMA COMPLETO: Tesseract OCR + Ollama")
+    print("=" * 70)
+    
+    try:
+        # Inicializar
+        print("\n📦 Inicializando servicios...")
+        ocr = OCRService()
+        llm = LLMService()
+        
+        # Simular texto de albarán
+        print("\n📝 Texto simulado de albarán:")
+        fake_text = """
+        ALBARÁN DE ENTREGA
+        Nº: ALB-2024-001234
+        Fecha: 20/11/2024
+        
+        Proveedor: Distribuciones del Norte S.L.
+        Destinatario: Supermercado La Despensa
+        
+        PRODUCTOS:
+        1001 | Leche Entera Pascual 1L | 48 Uds | L240815 | 15/12/2024
+        1002 | Yogur Natural Pack 8 | 24 Packs | L240820 | 28/11/2024
+        3042 | Agua Mineral 1.5L | 30 Packs | L240901 | 01/09/2026
+        """
+        print(fake_text)
+        
+        # Procesar con LLM
+        print("\n🧠 Procesando...")
+        result = llm.structure_albaran_data(fake_text)
+        
+        # Mostrar resultado
+        print("\n✅ RESULTADO JSON:")
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        
+        # Validar
+        count = len(result.get('productos', []))
+        print(f"\n📊 Productos extraídos: {count}")
+        
+        if count >= 3:
+            print("\n🎉 ¡TEST EXITOSO!")
+            return True
+        else:
+            print("\n⚠️ Se esperaban 3 productos")
+            return False
+            
+    except Exception as e:
+        print(f"\n❌ ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+if __name__ == "__main__":
+    main()
+7️⃣ ocr-service/.env
+text
+# Configuración del microservicio OCR
+
+# Ollama
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_MODEL=qwen3:8b
+
+# Tesseract (Windows)
+TESSERACT_PATH=C:\Program Files\Tesseract-OCR\tesseract.exe
+
+# Server
+API_PORT=8000
+🎯 Checklist de Implementación
+ Crear carpeta ocr-service/
+
+ Crear subcarpetas: services/, models/, utils/, uploads/
+
+ Crear archivos __init__.py vacíos en cada carpeta
+
+ Implementar models/schemas.py
+
+ Implementar utils/image_utils.py
+
+ Implementar services/ocr_service.py
+
+ Implementar services/llm_service.py
+
+ Implementar main.py
+
+ Implementar test_system.py
+
+ Crear .env
+
+ Ejecutar test: python test_system.py
+
+ Iniciar servidor: python main.py
+
+ Verificar en navegador: http://localhost:8000/docs
+
+🚀 Comandos para Ejecutar
+bash
+# Activar entorno conda
+conda activate easystock
+
+# Navegar a carpeta
+cd ocr-service
+
+# Ejecutar test
+python test_system.py
+
+# Iniciar servidor
+python main.py
+
+# Acceder a documentación
+# Abrir: http://localhost:8000/docs

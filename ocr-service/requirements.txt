@@ -1,0 +1,19 @@
+# FastAPI y servidor
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# OCR - VERSIÓN SIMPLIFICADA PARA WINDOWS
+paddleocr==2.7.3
+paddlepaddle  # ✅ Sin versión específica - pip elige la mejor
+
+# Procesamiento de imágenes
+opencv-python==4.8.1.78
+pillow==10.1.0
+
+# LLM local
+ollama==0.1.6
+
+# Utilidades
+python-dotenv==1.0.0
+pydantic==2.5.0

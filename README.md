@@ -17,7 +17,28 @@
 </div>
 
 ---
+## 🎯 Objetivo del Proyecto
 
+Easy Stock nace para simplificar al máximo el trabajo del responsable de almacén.  
+El sistema actúa como un microservicio de análisis de inventario que ofrece un panel único y muy visual donde se ve, de un vistazo, el estado real del stock.
+
+El dashboard muestra:
+- 💰 **Coste total del inventario** y número total de productos
+- 📦 **Listado de productos** con fecha de caducidad, ID, nombre, unidades, zona, etc.
+- 🏭 **Capacidad total del almacén** y porcentaje actualmente ocupado
+- 💳 **Facturas próximas y vencidas**
+- 🚨 **Alertas generadas automáticamente** en función de productos, facturas y capacidad usada
+
+El valor principal está en:
+- Un **estado global del stock** codificado por colores (🟥 rojo, 🟨 amarillo, 🟩 verde)
+- Un **sistema de alertas inteligente** que prioriza qué atender primero
+
+Nuestro foco es seguir refinando:
+- ⚡ La **velocidad** de la aplicación (carga, consultas, renderizado)
+- 🤖 La **automatización** de cálculos, detección de riesgos y tareas repetitivas
+- 📊 La **calidad de los datos**, asegurando información fiable y consistente
+
+El objetivo final: un dashboard sencillo pero extremadamente útil y eficiente, que permita tomar decisiones rápidas sin perder tiempo navegando múltiples sistemas.
 ## 🎯 Características Principales
 
 <table>

@@ -8,12 +8,7 @@
   "theme_color": "#21808d",
   "orientation": "any",
   "icons": [
-    {
-      "src": "favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ],
   "categories": ["business", "productivity"],
   "lang": "es",

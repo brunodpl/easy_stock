@@ -36,3 +36,14 @@ build/
 /generated/prisma
 
 /generated/prisma
+# OCR temporal files
+uploads/
+*.pdf
+temp/
+
+# Python (ya no necesario, pero por si acaso)
+.conda/
+venv/
+ocr-service/
+__pycache__/
+*.pyc

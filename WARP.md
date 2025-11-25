@@ -21,6 +21,7 @@ From the root of the repo:
 
 - **Configure environment** (PostgreSQL 15+):
   - Copy and edit env file as per `README.md` (expects `DATABASE_URL` used by Prisma).
+  - Set `OCR_SERVICE_URL` if the Python OCR service runs somewhere other than `http://localhost:8000`.
 
 - **Run database migrations** (uses `prisma.config.ts` + `prisma/schema.prisma`):
   - Apply latest migrations: `npx prisma migrate dev`
@@ -56,6 +57,10 @@ Key files:
 ### REST API surface
 
 All routes are mounted on the same Express app and use Prisma directly:
+
+- **OCR proxy + import**
+  - `POST /api/ocr/upload` — accepts a `multipart/form-data` upload (field `file`, max 10 MB, JPG/PNG/PDF) and proxies it to `${OCR_SERVICE_URL}/api/extract-albaran`, returning the Python service response. Protected by the same API key middleware.
+  - `POST /api/import/ocr-products` — consumes the structured payload returned by the OCR service and creates products after normalization/validation.
 
 - **Products**
   - `GET /api/products` — returns all non-deleted products (`deletedAt: null`), ordered by `name`.

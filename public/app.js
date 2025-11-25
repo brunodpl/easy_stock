@@ -1,135 +1,5 @@
 // Warehouse Management Dashboard Application
 
-// Sample Data
-/* const sampleData = {
-  products: [
-    {
-      id: 1,
-      nombre: "Leche Entera 1L",
-      sku: "LAC-LEC-001",
-      stock_actual: 24,
-      precio_unitario: 1.20,
-      categoria: "Lácteos",
-      caducidad: "2025-11-18",
-      ubicacion: "A-01",
-      stockMin: 10,
-      stockMax: 50
-    },
-    {
-      id: 6,
-      nombre: "Leche Entera 1L",
-      sku: "LAC-LEC-001",
-      stock_actual: 24,
-      precio_unitario: 1.20,
-      categoria: "Lácteos",
-      caducidad: "2025-11-25",
-      ubicacion: "A-03",
-      stockMin: 10,
-      stockMax: 50
-    },
-    {
-      id: 2,
-      nombre: "Pan Integral 500g",
-      sku: "PAN-INT-002",
-      stock_actual: 5,
-      precio_unitario: 2.50,
-      categoria: "Panadería",
-      caducidad: "2025-11-20",
-      ubicacion: "A-02",
-      stockMin: 15,
-      stockMax: 40
-    },
-    {
-      id: 3,
-      nombre: "Aceite de Oliva 1L",
-      sku: "ACE-OLI-003",
-      stock_actual: 65,
-      precio_unitario: 8.90,
-      categoria: "Aceites",
-      caducidad: "2025-12-01",
-      ubicacion: "B-01",
-      stockMin: 20,
-      stockMax: 60
-    },
-    {
-      id: 4,
-      nombre: "Arroz Blanco 1kg",
-      sku: "CER-ARR-004",
-      stock_actual: 35,
-      precio_unitario: 1.80,
-      categoria: "Cereales",
-      caducidad: "2025-12-01",
-      ubicacion: "B-02",
-      stockMin: 25,
-      stockMax: 80
-    },
-    {
-      id: 5,
-      nombre: "Tomate Frito 400g",
-      sku: "CON-TOM-005",
-      stock_actual: 2,
-      precio_unitario: 1.50,
-      categoria: "Conservas",
-      caducidad: "2025-12-01",
-      ubicacion: "C-01",
-      stockMin: 10,
-      stockMax: 50
-    }
-  ],
-  invoices: [
-    {
-      id: "INV-001",
-      vendor: "Proveedor A",
-      amount: 1250.50,
-      dueDate: "2025-11-19",
-      status: "pending"
-    },
-    {
-      id: "INV-002",
-      vendor: "Proveedor B",
-      amount: 890.25,
-      dueDate: "2025-11-22",
-      status: "pending"
-    },
-    {
-      id: "INV-003",
-      vendor: "Proveedor C",
-      amount: 2100.00,
-      dueDate: "2025-11-15",
-      status: "overdue"
-    }
-  ],
-  tasks: [
-    {
-      id: 1,
-      title: "Revisar stock crítico",
-      priority: "high",
-      assignedTo: "Juan Pérez",
-      supervisor: "María García",
-      phone: "+34 600 123 456"
-    },
-    {
-      id: 2,
-      title: "Reorganizar almacén zona B",
-      priority: "medium",
-      assignedTo: "Ana López",
-      supervisor: "Carlos Ruiz",
-      phone: "+34 600 789 012"
-    },
-    {
-      id: 3,
-      title: "Actualizar inventario mensual",
-      priority: "high",
-      assignedTo: "Pedro Sánchez",
-      supervisor: "Laura Martín",
-      phone: "+34 600 345 678"
-    }
-  ],
-  warehouseConfig: {
-    capacity: 1000,
-    occupied_percentage: 68
-  }
-}; */
 
 // ===== Global State & Session Tracking =====
 let appState = {
@@ -139,6 +9,7 @@ let appState = {
   warehouseConfig: { capacity: 1000 },
   alerts: [],
   kpis: null,
+  space: null,
   errorMessage: ''
 };
 
@@ -185,6 +56,26 @@ const STORAGE_KEYS = {
 let pendingSyncQueue = loadPendingQueueFromStorage();
 let isOfflineMode = !navigator.onLine;
 
+const OCR_IMPORT_ENDPOINT = '/api/import/ocr-products';
+let pendingOcrReview = null;
+const ocrReviewSelection = new Set();
+const ocrReviewUi = {
+  root: null,
+  summary: null,
+  fileName: null,
+  supplier: null,
+  destination: null,
+  albaranNumber: null,
+  albaranDate: null,
+  confidence: null,
+  products: null,
+  hint: null,
+  errors: null,
+  approveBtn: null,
+  cancelBtn: null
+};
+let isOcrReviewSubmitting = false;
+
 function getProductById(productId) {
   if (!productId) return null;
   const targetId = String(productId);
@@ -219,7 +110,8 @@ function persistAppStateSnapshot() {
       tasks: appState.tasks,
       alerts: appState.alerts,
       kpis: appState.kpis,
-      warehouseConfig: appState.warehouseConfig
+      warehouseConfig: appState.warehouseConfig,
+      space: appState.space
     };
     localStorage.setItem(STORAGE_KEYS.cache, JSON.stringify(snapshot));
   } catch (error) {
@@ -239,6 +131,7 @@ function loadAppStateFromCache() {
     appState.alerts = Array.isArray(snapshot.alerts) ? snapshot.alerts : [];
     appState.kpis = snapshot.kpis || null;
     appState.warehouseConfig = snapshot.warehouseConfig || appState.warehouseConfig;
+    appState.space = snapshot.space || null;
     return true;
   } catch (error) {
     console.warn('No se pudo restaurar la caché local:', error);
@@ -335,6 +228,62 @@ function formatDate(dateValue) {
   return parsed.toISOString().split('T')[0];
 }
 
+function initThemeToggle() {
+  const themeToggle = document.getElementById('theme-toggle');
+  const html = document.documentElement;
+  if (!themeToggle || !html) {
+    return;
+  }
+
+  const savedTheme = localStorage.getItem('theme');
+  const initialTheme = savedTheme || 'light';
+  html.setAttribute('data-color-scheme', initialTheme);
+
+  const animatedSelectors = '.card, .kpi-card, .header, .btn, .alert-item, .invoice-item, .task-item';
+
+  function addTransition() {
+    html.style.transition = 'background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1), color 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+    document.querySelectorAll(animatedSelectors).forEach((el) => {
+      el.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+    });
+  }
+
+  function removeTransition() {
+    setTimeout(() => {
+      html.style.transition = '';
+      document.querySelectorAll(animatedSelectors).forEach((el) => {
+        el.style.transition = '';
+      });
+    }, 400);
+  }
+
+  function toggleTheme() {
+    const currentTheme = html.getAttribute('data-color-scheme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    addTransition();
+    html.setAttribute('data-color-scheme', newTheme);
+    localStorage.setItem('theme', newTheme);
+
+    themeToggle.style.transform = 'scale(0.9)';
+    setTimeout(() => {
+      themeToggle.style.transform = '';
+    }, 200);
+
+    removeTransition();
+    window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme: newTheme } }));
+  }
+
+  themeToggle.addEventListener('click', toggleTheme);
+  themeToggle.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggleTheme();
+    }
+  });
+
+  window.toggleTheme = toggleTheme;
+}
+
 // Initialize Application
 async function init() {
   console.log('Initializing Warehouse Management Dashboard...');
@@ -358,6 +307,7 @@ async function init() {
   renderTasks();
   
   // Initialize voice control
+  initThemeToggle();
   initVoiceControl();
   initEditModeToggle();
   initDeletionHandlers();
@@ -365,6 +315,9 @@ async function init() {
   initProductEditor();
   initConfirmModal();
   initConnectivityListeners();
+  initOCRUpload();
+  initOcrReviewModal();
+  initOcrReviewActionHandlers();
   
   console.log('Dashboard initialized successfully!');
 }
@@ -372,12 +325,13 @@ async function init() {
 // ===== Initial Data Fetch & Bootstrapping =====
 async function loadData() {
   try {
-    const [productsRes, alertsRes, invoicesRes, kpisRes, tasksRes] = await Promise.all([
+    const [productsRes, alertsRes, invoicesRes, kpisRes, tasksRes, spaceRes] = await Promise.all([
       fetch('/api/products'),
       fetch('/api/alerts'),
       fetch('/api/invoices'),
       fetch('/api/kpis'),
-      fetch('/api/tasks')
+      fetch('/api/tasks'),
+      fetch('/api/space')
     ]);
 
     if (!productsRes.ok) throw new Error('No se pudieron obtener los productos');
@@ -385,13 +339,15 @@ async function loadData() {
     if (!invoicesRes.ok) throw new Error('No se pudieron obtener las facturas');
     if (!kpisRes.ok) throw new Error('No se pudieron obtener los KPIs');
     if (!tasksRes.ok) throw new Error('No se pudieron obtener las tareas');
+    if (!spaceRes.ok) throw new Error('No se pudo obtener la ocupación de espacio');
 
-    const [products, alerts, invoices, kpis, tasks] = await Promise.all([
+    const [products, alerts, invoices, kpis, tasks, space] = await Promise.all([
       productsRes.json(),
       alertsRes.json(),
       invoicesRes.json(),
       kpisRes.json(),
-      tasksRes.json()
+      tasksRes.json(),
+      spaceRes.json()
     ]);
 
     appState.products = Array.isArray(products)
@@ -417,6 +373,9 @@ async function loadData() {
       capacity: capacityFromKpis || appState.warehouseConfig.capacity || 1000,
       occupied_percentage: occupancyFromKpis || null
     };
+
+    // Space occupancy (volumetric)
+    appState.space = space && typeof space === 'object' ? space : null;
 
     console.log('✅ Datos cargados desde base de datos');
     appState.errorMessage = '';
@@ -881,9 +840,22 @@ function updateWarehouseGauge() {
 
 // Update Space Occupancy
 function updateSpaceOccupancy() {
-  const totalStock = appState.products.reduce((sum, p) => sum + (Number(p.stock_actual) || 0), 0);
-  const capacity = toNumber(appState.warehouseConfig.capacity) || 1000;
-  const percentage = capacity > 0 ? Math.min((totalStock / capacity) * 100, 100) : 0;
+  // Prefer server-calculated volumetric occupancy if available
+  const totals = appState.space?.totals || null;
+  let capacity, occupied, available, percentage;
+  if (totals) {
+    capacity = Number(totals.capacity_m3) || 0;
+    occupied = Number(totals.occupied_m3) || 0;
+    available = Number(totals.available_m3) || Math.max(capacity - occupied, 0);
+    percentage = Number(totals.pct_occupied) || (capacity > 0 ? (occupied / capacity) * 100 : 0);
+  } else {
+    // Fallback: old approximation by counting items vs capacity
+    const totalStock = appState.products.reduce((sum, p) => sum + (Number(p.stock_actual) || 0), 0);
+    capacity = toNumber(appState.warehouseConfig.capacity) || 1000;
+    occupied = totalStock;
+    available = Math.max(capacity - occupied, 0);
+    percentage = capacity > 0 ? Math.min((occupied / capacity) * 100, 100) : 0;
+  }
   
   const spaceBarFill = document.getElementById('space-bar-fill');
   const spaceBarLabel = document.getElementById('space-bar-label');
@@ -891,11 +863,11 @@ function updateSpaceOccupancy() {
   const capacityAvailable = document.getElementById('capacity-available');
   
   if (spaceBarFill) {
-    spaceBarFill.style.width = `${percentage}%`;
+    spaceBarFill.style.width = `${Math.min(percentage, 100)}%`;
   }
   
   if (spaceBarLabel) {
-    spaceBarLabel.textContent = `${totalStock} / ${capacity} m³`;
+    spaceBarLabel.textContent = `${occupied.toLocaleString('es-ES')} / ${capacity.toLocaleString('es-ES')} m³`;
   }
   
   if (capacityTotal) {
@@ -903,7 +875,6 @@ function updateSpaceOccupancy() {
   }
   
   if (capacityAvailable) {
-    const available = Math.max(capacity - totalStock, 0);
     capacityAvailable.textContent = `${available.toLocaleString('es-ES')} m³`;
   }
 }
@@ -1045,6 +1016,163 @@ function initVoiceControl() {
     isListening = false;
     voiceBtn.classList.remove('listening');
   };
+}
+
+// ===== OCR Upload Integration =====
+const OCR_API_BASE = (document.querySelector('meta[name="ocr-api-base"]')?.content || 'http://localhost:8000').replace(/\/$/, '');
+
+function initOCRUpload() {
+  const btn = document.getElementById('ocr-upload-btn');
+  const input = document.getElementById('ocr-file-input');
+  if (!btn || !input) return;
+
+  btn.addEventListener('click', () => {
+    input.click();
+  });
+
+  input.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      setOCRButtonLoading(true);
+      await processOCRFile(file);
+    } catch (err) {
+      console.error('OCR error:', err);
+      appState.errorMessage = (err && err.message) || 'No se pudo procesar el albarán.';
+      renderErrorBanner();
+    } finally {
+      setOCRButtonLoading(false);
+      input.value = '';
+    }
+  });
+}
+
+function setOCRButtonLoading(isLoading) {
+  const btn = document.getElementById('ocr-upload-btn');
+  if (!btn) return;
+  btn.disabled = isLoading;
+  btn.textContent = isLoading ? 'Procesando…' : 'OCR Albarán';
+}
+
+async function processOCRFile(file) {
+  const baseOrigin = window.location.origin.replace(/\/$/, '');
+  const normalizedOcrBase = OCR_API_BASE.replace(/\/$/, '');
+
+  const endpointsToTry = [
+    '/api/invoices/process',
+    `${baseOrigin}/api/invoices/process`,
+    `${normalizedOcrBase}/api/extract-albaran`,
+    `${normalizedOcrBase.replace('localhost', '127.0.0.1')}/api/extract-albaran`,
+    `${normalizedOcrBase.replace('127.0.0.1', 'localhost')}/api/extract-albaran`,
+  ].filter(Boolean).filter((value, index, self) => self.indexOf(value) === index);
+
+  let lastError = null;
+  for (const url of endpointsToTry) {
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch(url, { method: 'POST', body: form });
+      let data;
+      try {
+        data = await res.json();
+      } catch (parseError) {
+        if (!res.ok) {
+          throw new Error(`Error procesando archivo (${res.status})`);
+        }
+        throw new Error('Respuesta no válida del servicio OCR');
+      }
+      if (!res.ok) {
+        if (data && data.savedJson) {
+          handleOCRSuccess(data);
+          return;
+        }
+        const detail = data?.detail || data?.error || data?.message || 'Error procesando albarán';
+        throw new Error(detail);
+      }
+      handleOCRSuccess(data);
+      return;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError || new Error('No se pudo conectar con el servicio OCR');
+}
+
+function handleOCRSuccess(response) {
+  if (response?.invoice || response?.savedJson) {
+    handleInvoiceExtractionResult(response);
+    return;
+  }
+
+  const productos = Array.isArray(response?.data?.productos) ? response.data.productos : [];
+  const count = productos.length;
+  const msg = response?.message || `Albarán procesado. ${count} producto(s) extraído(s).`;
+  pendingOcrReview = {
+    snapshot: response?.snapshot || null,
+    productos,
+    albaran: {
+      numero_albaran: response?.data?.numero_albaran || null,
+      fecha: response?.data?.fecha || null,
+      proveedor: response?.data?.proveedor || null,
+      destinatario: response?.data?.destinatario || null
+    },
+    confidence: response?.ocr_confidence || 0
+  };
+  openOcrReviewModal(pendingOcrReview);
+  const reviewCta = pendingOcrReview?.snapshot
+    ? '<button type="button" class="alert-inline-btn" data-action="open-ocr-review">Revisar importación</button>'
+    : '';
+  appState.alerts = [
+    {
+      id: `ocr-${Date.now()}`,
+      title: '🧾 Resultado OCR',
+      description: `${msg} Confianza OCR: ${Math.round((response?.ocr_confidence || 0)*100)}% ${reviewCta}`,
+      priority: 'info',
+      type: 'info'
+    },
+    ...appState.alerts
+  ];
+  renderAlerts();
+  console.log('OCR structured data:', response);
+}
+
+function handleInvoiceExtractionResult(result) {
+  pendingOcrReview = null;
+  const invoice = result?.invoice || {};
+  const savedPath = result?.savedJson ? result.savedJson.replace(/^\.\//, '') : null;
+  const infoPieces = [
+    invoice.numero_factura ? `Factura ${invoice.numero_factura}` : null,
+    invoice.fecha ? `Fecha ${invoice.fecha}` : null,
+    invoice.proveedor ? `Proveedor ${invoice.proveedor}` : null,
+    invoice.total ? `Total ${invoice.total}` : null
+  ].filter(Boolean);
+  const description = [
+    infoPieces.join(' • ') || 'Datos extraídos correctamente.',
+    savedPath ? `JSON guardado en ${savedPath}` : null
+  ].filter(Boolean).join(' | ');
+
+  const severity = result.success ? 'info' : 'warning';
+
+  appState.alerts = [
+    {
+      id: `invoice-${Date.now()}`,
+      title: '🧾 Factura procesada',
+      description,
+      priority: severity,
+      type: severity
+    },
+    ...appState.alerts
+  ];
+  renderAlerts();
+
+  if (!result.success) {
+    appState.errorMessage = result.error || 'No se pudo interpretar la factura.';
+  } else {
+    appState.errorMessage = '';
+  }
+  renderErrorBanner();
+
+  console.log('Invoice extraction result:', result);
 }
 
 // Start the application when DOM is ready
@@ -1809,4 +1937,247 @@ function stageProductUpdate(productId, payload = {}, preview = {}, stockTarget =
     nombre: nextProductState.nombre
   });
   refreshInventoryWidgets();
+}
+
+// ===== OCR Review Modal =====
+function initOcrReviewModal() {
+  if (ocrReviewUi.root) return;
+  const root = document.getElementById('ocr-review-modal');
+  if (!root) return;
+  ocrReviewUi.root = root;
+  ocrReviewUi.summary = document.getElementById('ocr-review-summary');
+  ocrReviewUi.fileName = document.getElementById('ocr-review-file');
+  ocrReviewUi.supplier = document.getElementById('ocr-review-supplier');
+  ocrReviewUi.destination = document.getElementById('ocr-review-destination');
+  ocrReviewUi.albaranNumber = document.getElementById('ocr-review-number');
+  ocrReviewUi.albaranDate = document.getElementById('ocr-review-date');
+  ocrReviewUi.confidence = document.getElementById('ocr-review-confidence');
+  ocrReviewUi.products = document.getElementById('ocr-review-products');
+  ocrReviewUi.hint = document.getElementById('ocr-review-hint');
+  ocrReviewUi.errors = document.getElementById('ocr-review-errors');
+  ocrReviewUi.approveBtn = document.getElementById('ocr-review-approve-btn');
+  ocrReviewUi.cancelBtn = document.getElementById('ocr-review-cancel-btn');
+
+  ocrReviewUi.cancelBtn?.addEventListener('click', handleOcrReviewCancel);
+  ocrReviewUi.approveBtn?.addEventListener('click', handleOcrReviewApprove);
+
+  root.addEventListener('click', (event) => {
+    if (event.target.dataset.ocrModalClose === 'true' && !isOcrReviewSubmitting) {
+      handleOcrReviewCancel();
+    }
+  });
+
+  root.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('input[data-ocr-product-index]');
+    if (!checkbox || checkbox.disabled) return;
+    const index = Number(checkbox.dataset.ocrProductIndex);
+    if (Number.isNaN(index)) return;
+    if (checkbox.checked) {
+      ocrReviewSelection.add(index);
+    } else {
+      ocrReviewSelection.delete(index);
+    }
+    updateOcrReviewHint();
+    updateOcrReviewActionState();
+  });
+}
+
+function initOcrReviewActionHandlers() {
+  document.addEventListener('click', (event) => {
+    const reviewBtn = event.target.closest('[data-action="open-ocr-review"]');
+    if (!reviewBtn) return;
+    event.preventDefault();
+    if (pendingOcrReview) {
+      openOcrReviewModal(pendingOcrReview);
+    }
+  });
+}
+
+function openOcrReviewModal(reviewData = pendingOcrReview) {
+  if (!ocrReviewUi.root) {
+    initOcrReviewModal();
+  }
+  if (!ocrReviewUi.root || !reviewData) return;
+  pendingOcrReview = reviewData;
+  ocrReviewSelection.clear();
+  reviewData.productos.slice(0, 2).forEach((_, index) => {
+    ocrReviewSelection.add(index);
+  });
+  populateOcrReviewModal();
+  setOcrReviewError('');
+  isOcrReviewSubmitting = false;
+  updateOcrReviewActionState();
+  ocrReviewUi.root.classList.add('is-open');
+  ocrReviewUi.root.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+}
+
+function closeOcrReviewModal({ clearPending = false } = {}) {
+  if (!ocrReviewUi.root) return;
+  ocrReviewUi.root.classList.remove('is-open');
+  ocrReviewUi.root.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+  if (clearPending) {
+    pendingOcrReview = null;
+  }
+}
+
+function populateOcrReviewModal() {
+  if (!pendingOcrReview) return;
+  const { snapshot, albaran, productos, confidence = 0 } = pendingOcrReview;
+  if (ocrReviewUi.summary) {
+    const createdAt = snapshot?.created_at ? new Date(snapshot.created_at) : null;
+    const formatted = createdAt && !Number.isNaN(createdAt.getTime())
+      ? createdAt.toLocaleString('es-ES')
+      : 'Fecha no disponible';
+    ocrReviewUi.summary.textContent = `${productos.length} producto(s) detectados · ${formatted}`;
+  }
+  if (ocrReviewUi.fileName) {
+    ocrReviewUi.fileName.textContent = snapshot?.source_file || 'Archivo no especificado';
+  }
+  if (ocrReviewUi.supplier) {
+    ocrReviewUi.supplier.textContent = albaran?.proveedor || 'Proveedor no indicado';
+  }
+  if (ocrReviewUi.destination) {
+    ocrReviewUi.destination.textContent = albaran?.destinatario || 'Destinatario no indicado';
+  }
+  if (ocrReviewUi.albaranNumber) {
+    ocrReviewUi.albaranNumber.textContent = albaran?.numero_albaran || '—';
+  }
+  if (ocrReviewUi.albaranDate) {
+    ocrReviewUi.albaranDate.textContent = albaran?.fecha || '—';
+  }
+  if (ocrReviewUi.confidence) {
+    const pct = Math.round((confidence || 0) * 100);
+    ocrReviewUi.confidence.textContent = `${pct}%`;
+  }
+  renderOcrReviewProducts(productos);
+  updateOcrReviewHint();
+}
+
+function renderOcrReviewProducts(products = []) {
+  if (!ocrReviewUi.products) return;
+  if (!Array.isArray(products) || products.length === 0) {
+    ocrReviewUi.products.innerHTML = '<p class="ocr-review-empty">No se detectaron productos para revisar.</p>';
+    return;
+  }
+  ocrReviewUi.products.innerHTML = products.map((product, index) => {
+    const isChecked = ocrReviewSelection.has(index);
+    const descripcion = product.descripcion || `Producto ${index + 1}`;
+    const cantidad = product.cantidad ?? 'N/D';
+    const unidad = product.unidad || '';
+    const codigo = product.codigo || 'Sin código';
+    const lote = product.lote || 'Sin lote';
+    const caducidad = product.caducidad || 'Sin caducidad';
+    return `
+      <label class="ocr-review-product">
+        <input type="checkbox" data-ocr-product-index="${index}" ${isChecked ? 'checked' : ''}>
+        <div class="ocr-review-product__body">
+          <div class="ocr-review-product__title">
+            <strong>${descripcion}</strong>
+            <span>SKU: ${codigo}</span>
+          </div>
+          <div class="ocr-review-product__meta">
+            <span>Cantidad: ${cantidad} ${unidad}</span>
+            <span>Lote: ${lote}</span>
+            <span>Caducidad: ${caducidad}</span>
+          </div>
+        </div>
+      </label>
+    `;
+  }).join('');
+}
+
+function updateOcrReviewHint() {
+  if (!ocrReviewUi.hint) return;
+  const selected = ocrReviewSelection.size;
+  if (selected >= 2) {
+    ocrReviewUi.hint.textContent = `${selected} producto(s) confirmados. Se importarán todos los detectados después de tu aprobación.`;
+    ocrReviewUi.hint.classList.remove('is-error');
+  } else {
+    const remaining = 2 - selected;
+    ocrReviewUi.hint.textContent = `Selecciona ${remaining} producto(s) más para confirmar la importación.`;
+    ocrReviewUi.hint.classList.add('is-error');
+  }
+}
+
+function setOcrReviewError(message) {
+  if (!ocrReviewUi.errors) return;
+  if (message) {
+    ocrReviewUi.errors.textContent = message;
+    ocrReviewUi.errors.hidden = false;
+  } else {
+    ocrReviewUi.errors.textContent = '';
+    ocrReviewUi.errors.hidden = true;
+  }
+}
+
+function updateOcrReviewActionState() {
+  if (!ocrReviewUi.approveBtn) return;
+  const disable = isOcrReviewSubmitting || ocrReviewSelection.size < 2;
+  ocrReviewUi.approveBtn.disabled = disable;
+  ocrReviewUi.approveBtn.textContent = isOcrReviewSubmitting ? 'Importando…' : 'Importar productos';
+}
+
+function handleOcrReviewCancel() {
+  if (isOcrReviewSubmitting) return;
+  closeOcrReviewModal();
+}
+
+async function handleOcrReviewApprove() {
+  if (!pendingOcrReview) return;
+  if (ocrReviewSelection.size < 2) {
+    setOcrReviewError('Selecciona al menos 2 productos para continuar.');
+    return;
+  }
+  if (!navigator.onLine) {
+    setOcrReviewError('Sin conexión. Reintenta cuando vuelvas a estar en línea.');
+    return;
+  }
+  setOcrReviewError('');
+  isOcrReviewSubmitting = true;
+  updateOcrReviewActionState();
+
+  try {
+    const totalProductos = pendingOcrReview.productos?.length || 0;
+    const payload = {
+      snapshotId: pendingOcrReview.snapshot?.id || null,
+      productos: pendingOcrReview.productos,
+      metadata: pendingOcrReview.albaran,
+      confirmedIndices: Array.from(ocrReviewSelection)
+    };
+    const response = await fetch(OCR_IMPORT_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      let detail = 'No se pudo importar los productos.';
+      try {
+        const errorBody = await response.json();
+        detail = errorBody?.error || errorBody?.message || detail;
+      } catch (_) {}
+      throw new Error(detail);
+    }
+    const result = await response.json();
+    closeOcrReviewModal({ clearPending: true });
+    await loadData();
+    refreshInventoryWidgets({ includeLists: true });
+    appState.alerts = [
+      {
+        id: `ocr-import-${Date.now()}`,
+        title: '✅ Importación OCR aplicada',
+        description: `Se importaron ${result?.inserted ?? totalProductos} productos desde el albarán.`,
+        priority: 'info',
+        type: 'success'
+      },
+      ...appState.alerts
+    ];
+    renderAlerts();
+  } catch (error) {
+    setOcrReviewError(error.message || 'No se pudo completar la importación.');
+  } finally {
+    isOcrReviewSubmitting = false;
+    updateOcrReviewActionState();
+  }
 }

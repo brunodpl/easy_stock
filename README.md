@@ -462,6 +462,82 @@ El servidor estará disponible en `http://localhost:3001`
 
 ---
 
+## 🧠 Servicio OCR (Python + FastAPI)
+
+El microservicio de OCR vive en `ocr-service/` y procesa albaranes/órdenes de compra que luego se importan mediante los endpoints `/api/ocr/upload` y `/api/import/ocr-products` del servidor Express. Sigue estos pasos para dejarlo operativo:
+
+### 1. Dependencias del Sistema
+
+- **Python 3.11+** (recomendado 3.12, igual que `environment.yml`).
+- **Tesseract OCR** instalado y accesible en PATH. En Windows puedes usar el instalador oficial y verificarlo con `tesseract --version`.
+- **Poppler** (biblioteca `pdftoppm/pdftocairo`) para convertir PDF a imágenes. En Windows basta con instalar el paquete de [poppler for Windows](https://github.com/oschwartz10612/poppler-windows/releases) y añadir la carpeta `bin/` al PATH; en macOS `brew install poppler`; en Linux `sudo apt install poppler-utils`.
+
+### 2. Configuración del Entorno
+
+```bash
+cd ocr-service
+# Opción A: conda (entorno recomendado)
+conda env create -f environment.yml
+conda activate easyocr
+
+# Opción B: pip puro
+python -m venv .venv
+source .venv/bin/activate  # En Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Copia el entorno de ejemplo y ajusta las rutas/patrones según tu sistema:
+
+```bash
+cp .env.example .env
+# Edita PYTESSERACT_PATH, POPPLER_PATH, OCR_PORT, OLLAMA_HOST, etc.
+```
+
+### 3. Levantar el Servicio
+
+```bash
+cd ocr-service
+uvicorn main:app --reload --port 8000
+# El endpoint quedará en http://localhost:8000/api/extract-albaran
+```
+
+### 4. Pruebas y Verificación
+
+1. **Chequeo de dependencias:**
+  ```bash
+  python test_ocr_setup.py --check
+  ```
+  El script valida que Tesseract, Poppler y las librerías de Python estén accesibles.
+
+2. **Prueba funcional con PDF real:**
+  ```bash
+  python test_ocr_setup.py --pdf tests/assets/sample_invoice.pdf
+  ```
+  Esto ejecuta el pipeline completo (PDF ➜ imágenes ➜ Tesseract) y guarda la traza en `logs/ocr-test.log`.
+
+3. **Smoke test FastAPI:**
+  ```bash
+  pytest -k test_system -q
+  ```
+  También puedes hacer una llamada manual:
+  ```bash
+  curl -X POST http://localhost:8000/api/extract-albaran \
+      -F "file=@tests/assets/sample_invoice.pdf"
+  ```
+
+4. **Revisión de logs:**
+  Los logs del OCR se escriben en consola y en `ocr-service/logs/ocr-service.log`. Revísalos después de cada importación para detectar errores de Tesseract/Poppler o timeouts del LLM.
+
+Con estos pasos garantizas que:
+- Todas las dependencias están instaladas sin errores.
+- `test_ocr_setup.py` se ejecuta correctamente.
+- Tesseract y Poppler funcionan.
+- El archivo `requirements.txt` refleja las librerías necesarias.
+- El README contiene las instrucciones de despliegue y pruebas.
+- Los endpoints FastAPI responden y los logs están auditados.
+
+---
+
 ## 🎯 Roadmap
 
 ### Q1 2026 - Fase 1: Automatización IA

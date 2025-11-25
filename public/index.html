@@ -19,6 +19,8 @@
     <meta name="apple-mobile-web-app-title" content="Easy Stock">
     
     <title>Easy Stock - Gestión de Almacén</title>
+    <!-- Configurable OCR API base (override as needed) -->
+    <meta name="ocr-api-base" content="http://localhost:8000">
     
     <!-- Styles -->
     <link rel="stylesheet" href="style.css">
@@ -37,12 +39,13 @@
                     <span id="current-date"></span>
                 </div>
             </div>
-            <button id="edit-mode-toggle" class="edit-mode-btn">
-                <!-- SVG del lápiz -->
-                Editar
-            </button>
-
-  
+            <div style="display:flex; gap: 12px; align-items:center; flex-wrap: wrap;">
+                <input id="ocr-file-input" class="sr-only" type="file" accept="image/*,application/pdf" />
+                <button id="ocr-upload-btn" class="edit-mode-btn" aria-label="Procesar albarán (OCR)" title="Procesar albarán (OCR)">OCR Albarán</button>
+                <button id="edit-mode-toggle" class="edit-mode-btn">
+                    Editar
+                </button>
+            </div>
         </header>
 
         <!-- Main Dashboard -->
@@ -225,6 +228,50 @@
             </div>
         </div>
 
+        <!-- OCR Review Modal -->
+        <div id="ocr-review-modal" class="ocr-review-modal" aria-hidden="true">
+            <div class="ocr-review-modal__backdrop" data-ocr-modal-close="true"></div>
+            <div class="ocr-review-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="ocr-review-title">
+                <div class="ocr-review-modal__header">
+                    <h3 id="ocr-review-title">Revisar importación OCR</h3>
+                    <p id="ocr-review-summary">0 productos detectados.</p>
+                </div>
+                <div class="ocr-review-meta">
+                    <div>
+                        <span>Archivo</span>
+                        <strong id="ocr-review-file">—</strong>
+                    </div>
+                    <div>
+                        <span>Proveedor</span>
+                        <strong id="ocr-review-supplier">—</strong>
+                    </div>
+                    <div>
+                        <span>Destinatario</span>
+                        <strong id="ocr-review-destination">—</strong>
+                    </div>
+                    <div>
+                        <span>Nº Albarán</span>
+                        <strong id="ocr-review-number">—</strong>
+                    </div>
+                    <div>
+                        <span>Fecha</span>
+                        <strong id="ocr-review-date">—</strong>
+                    </div>
+                </div>
+                <div class="ocr-review-confidence">
+                    <span>Confianza OCR</span>
+                    <strong id="ocr-review-confidence">0%</strong>
+                </div>
+                <div class="ocr-review-products" id="ocr-review-products"></div>
+                <p id="ocr-review-hint" class="ocr-review-hint">Selecciona al menos 2 productos para confirmar la importación.</p>
+                <div id="ocr-review-errors" class="ocr-review-errors" hidden></div>
+                <div class="ocr-review-modal__footer">
+                    <button id="ocr-review-cancel-btn" class="modal-btn modal-btn--secondary" type="button">Revisar más tarde</button>
+                    <button id="ocr-review-approve-btn" class="modal-btn modal-btn--primary" type="button" disabled>Importar productos</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Voice Control Button -->
         <button id="voice-btn" class="voice-btn" aria-label="Control por voz" title="Activar control por voz">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -255,84 +302,6 @@
     </div>
 
     <!-- Scripts - defer for better performance -->
-    <script>
-        // Theme Toggle Script - Enhanced Version with Light Theme as Default
-        (function() {
-            const themeToggle = document.getElementById('theme-toggle');
-            const html = document.documentElement;
-            
-            // Get saved theme or default to LIGHT (not system preference)
-            const savedTheme = localStorage.getItem('theme');
-            const initialTheme = savedTheme || 'light'; // Always default to light theme
-            
-            // Apply initial theme immediately to prevent flash
-            html.setAttribute('data-color-scheme', initialTheme);
-            
-            // Add smooth transition class for theme changes
-            function addTransition() {
-                html.style.transition = 'background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1), color 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
-                
-                // Apply transition to all major elements
-                const elements = document.querySelectorAll('.card, .kpi-card, .header, .btn, .alert-item, .invoice-item, .task-item');
-                elements.forEach(el => {
-                    el.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
-                });
-            }
-            
-            function removeTransition() {
-                setTimeout(() => {
-                    html.style.transition = '';
-                    const elements = document.querySelectorAll('.card, .kpi-card, .header, .btn, .alert-item, .invoice-item, .task-item');
-                    elements.forEach(el => {
-                        el.style.transition = '';
-                    });
-                }, 400);
-            }
-            
-            // Toggle theme function with enhanced animations
-            function toggleTheme() {
-                const currentTheme = html.getAttribute('data-color-scheme');
-                const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-                
-                // Add transition
-                addTransition();
-                
-                // Change theme
-                html.setAttribute('data-color-scheme', newTheme);
-                localStorage.setItem('theme', newTheme);
-                
-                // Add subtle scale animation to button
-                if (themeToggle) {
-                    themeToggle.style.transform = 'scale(0.9)';
-                    setTimeout(() => {
-                        themeToggle.style.transform = '';
-                    }, 200);
-                }
-                
-                // Remove transition after animation
-                removeTransition();
-                
-                // Optional: Dispatch custom event for other components
-                window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme: newTheme } }));
-            }
-            
-            // Add click event listener
-            if (themeToggle) {
-                themeToggle.addEventListener('click', toggleTheme);
-                
-                // Add keyboard support
-                themeToggle.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        toggleTheme();
-                    }
-                });
-            }
-            
-            // Export toggle function for external use
-            window.toggleTheme = toggleTheme;
-        })();
-    </script>
     <script src="app.js" defer></script>
 </body>
 </html>

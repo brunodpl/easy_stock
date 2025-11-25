@@ -716,6 +716,158 @@ pre code {
   transform: translateY(-1px);
   box-shadow: 0 15px 35px rgba(185, 28, 28, 0.35);
 }
+/* OCR Review Modal */
+.ocr-review-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2050;
+}
+
+.ocr-review-modal.is-open {
+  display: flex;
+}
+
+.ocr-review-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+}
+
+.ocr-review-modal__dialog {
+  position: relative;
+  width: min(720px, 95vw);
+  max-height: 95vh;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-24);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(var(--color-primary-rgb, 59, 130, 246), 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-20);
+}
+
+.ocr-review-modal__header h3 {
+  margin-bottom: var(--space-4);
+}
+
+.ocr-review-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-12);
+  background: rgba(var(--color-gray-200-rgb), 0.45);
+  padding: var(--space-16);
+  border-radius: var(--radius-base);
+  border: 1px dashed rgba(var(--color-gray-400-rgb), 0.4);
+}
+
+.ocr-review-meta span {
+  display: block;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.ocr-review-meta strong {
+  font-size: var(--font-size-base);
+}
+
+.ocr-review-confidence {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-12) var(--space-16);
+  background: rgba(34, 197, 94, 0.12);
+  border-radius: var(--radius-base);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.ocr-review-products {
+  max-height: 40vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.ocr-review-product {
+  display: flex;
+  gap: var(--space-12);
+  padding: var(--space-12);
+  border-radius: var(--radius-base);
+  border: 1px solid rgba(var(--color-gray-400-rgb), 0.3);
+  background: rgba(var(--color-gray-100-rgb, 241, 245, 249), 0.7);
+  cursor: pointer;
+}
+
+.ocr-review-product input[type="checkbox"] {
+  margin-top: var(--space-8);
+  width: 18px;
+  height: 18px;
+}
+
+.ocr-review-product__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.ocr-review-product__title {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.ocr-review-product__title span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.ocr-review-product__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.ocr-review-hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.ocr-review-hint.is-error {
+  color: var(--color-error);
+}
+
+.ocr-review-errors {
+  padding: var(--space-12);
+  background: rgba(var(--color-error-rgb), 0.15);
+  border: 1px solid rgba(var(--color-error-rgb), 0.4);
+  color: var(--color-error);
+  border-radius: var(--radius-base);
+  font-weight: 600;
+}
+
+.ocr-review-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-12);
+}
+
+.ocr-review-empty {
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
 
 .modal-btn:disabled {
   opacity: 0.6;
@@ -1139,6 +1291,26 @@ body.modal-open {
   color: var(--color-text-secondary);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
   line-height: 1.5;
+}
+
+.alert-inline-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-left: var(--space-8);
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+
+.alert-inline-btn:hover,
+.alert-inline-btn:focus-visible {
+  background: rgba(59, 130, 246, 0.25);
 }
 
 .alert-badge {
